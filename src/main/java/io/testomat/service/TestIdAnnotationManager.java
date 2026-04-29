@@ -1,0 +1,226 @@
+package io.testomat.service;
+
+import io.testomat.model.ParsedKtFile;
+import java.nio.file.Paths;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
+import org.jetbrains.kotlin.psi.KtAnnotationEntry;
+import org.jetbrains.kotlin.psi.KtClass;
+import org.jetbrains.kotlin.psi.KtFile;
+import org.jetbrains.kotlin.psi.KtNamedFunction;
+import org.jetbrains.kotlin.psi.KtPsiFactory;
+
+public class TestIdAnnotationManager {
+
+    private static final String TEST_ID_IMPORT = "io.testomat.core.annotation.TestId";
+    private static final String TEST_ID_ANNOTATION = "TestId";
+    private static final String TEST_ID_PREFIX = "@T";
+
+    public Optional<KtNamedFunction> findMethodInParsedKtFiles(
+            List<ParsedKtFile> parsedKtFiles, TestMethodInfo methodInfo, boolean verbose) {
+
+        if (verbose) {
+            System.out.println("  Looking for method: " + methodInfo.getMethodName()
+                    + " in class: " + methodInfo.getClassName()
+                    + " from file: " + methodInfo.getFilePath());
+        }
+
+        Optional<KtNamedFunction> result;
+
+        String expectedFileName = extractFileName(methodInfo.getFilePath());
+
+        result = parsedKtFiles.stream()
+            .filter(ktFile -> isMatchingFile(ktFile.getKtFile(), expectedFileName, verbose))
+            .flatMap(ktFile ->
+                findMethodsInParsedKtFile(ktFile.getKtFile(), methodInfo, verbose).stream())
+            .findFirst();
+
+        if (result.isPresent()) {
+            if (verbose) {
+                System.out.println("  Found method using exact filename match");
+            }
+            return result;
+        }
+
+        result = parsedKtFiles.stream()
+            .filter(parsedKtFile ->
+                isMatchingFileByPath(parsedKtFile, methodInfo.getFilePath(), verbose))
+            .flatMap(ktFile ->
+                findMethodsInParsedKtFile(ktFile.getKtFile(), methodInfo, verbose).stream())
+            .findFirst();
+
+        if (result.isPresent()) {
+            if (verbose) {
+                System.out.println("  Found method using path-based matching");
+            }
+            return result;
+        }
+
+        if (verbose) {
+            System.out.println("  Method not found in any compilation unit");
+        }
+
+        return Optional.empty();
+    }
+
+    public void addTestIdAnnotationToMethod(KtNamedFunction method, String testId) {
+        String cleanTestId = cleanTestIdValue(testId);
+
+        Optional<KtAnnotationEntry> existingAnnotation =
+                method.getAnnotationEntries().stream()
+                .filter(a -> TEST_ID_ANNOTATION.equals(getAnnotationName(a)))
+                .findFirst();
+
+        if (existingAnnotation.isPresent()) {
+            updateExistingTestIdAnnotation(existingAnnotation.get(), method, cleanTestId);
+        } else {
+            addNewTestIdAnnotation(method, cleanTestId);
+        }
+    }
+
+    public void ensureTestIdImportExists(KtFile ktFile) {
+        boolean hasImport = ktFile.getImportDirectives().stream()
+                .anyMatch(imp ->
+                imp.getImportedFqName() != null
+                    && TEST_ID_IMPORT.equals(imp.getImportedFqName().asString()));
+    }
+
+    private boolean isMatchingFile(KtFile ktFile, String expectedFileName,
+            boolean verbose) {
+
+        String actualFileName = ktFile.getName();
+        boolean matches = actualFileName.equals(expectedFileName);
+
+        if (verbose) {
+            System.out.println("    Checking file: " + actualFileName
+                    + " vs expected: " + expectedFileName + " -> " + matches);
+        }
+
+        return matches;
+    }
+
+    private boolean isMatchingFileByPath(ParsedKtFile parsedKtFile,
+            String expectedPath,
+            boolean verbose) {
+
+        String actualPath = parsedKtFile.getPath()
+                .toString()
+                .replace('\\', '/');
+
+        String expectedPathStr = Paths.get(expectedPath)
+                .normalize()
+                .toString()
+                .replace('\\', '/');
+
+        boolean match = actualPath.endsWith(expectedPathStr)
+                || expectedPathStr.endsWith(actualPath);
+
+        if (verbose) {
+            System.out.println("    Path comparison: " + actualPath + " vs "
+                    + expectedPathStr + " -> " + match);
+        }
+
+        return match;
+    }
+
+    private List<KtNamedFunction> findMethodsInParsedKtFile(
+            KtFile ktFile, TestMethodInfo methodInfo, boolean verbose) {
+
+        Collection<KtNamedFunction> allMethods =
+                PsiTreeUtil.findChildrenOfType(ktFile, KtNamedFunction.class);
+
+        List<KtNamedFunction> matchingMethods = allMethods.stream()
+                .filter(m -> methodInfo.getMethodName().equals(m.getName()))
+                .filter(m -> isMethodInCorrectClass(m, methodInfo.getClassName(), verbose))
+                .collect(Collectors.toList());
+
+        if (verbose) {
+            System.out.println("    Found " + allMethods.size() + " total methods, "
+                    + matchingMethods.size() + " matching methods");
+        }
+
+        return matchingMethods;
+    }
+
+    private boolean isMethodInCorrectClass(KtNamedFunction method, String expectedClassName,
+            boolean verbose) {
+
+        KtClass clazz = PsiTreeUtil.getParentOfType(method, KtClass.class);
+
+        if (clazz != null) {
+            String actual = clazz.getName();
+            boolean matches = expectedClassName.equals(actual);
+
+            if (verbose) {
+                System.out.println("      Class match: " + actual + " vs "
+                        + expectedClassName + " -> " + matches);
+            }
+
+            return matches;
+        }
+
+        if (verbose) {
+            System.out.println("      Method has no containing class");
+        }
+
+        return false;
+    }
+
+    private String extractFileName(String filePath) {
+        return Paths.get(filePath).getFileName().toString();
+    }
+
+    private String cleanTestIdValue(String testId) {
+        return testId.replace(TEST_ID_PREFIX, "");
+    }
+
+    private void updateExistingTestIdAnnotation(KtAnnotationEntry annotation,
+            KtNamedFunction method, String cleanTestId) {
+
+        annotation.delete();
+        addNewTestIdAnnotation(method, cleanTestId);
+    }
+
+    private void addNewTestIdAnnotation(KtNamedFunction method, String cleanTestId) {
+
+        KtPsiFactory factory = new KtPsiFactory(method.getProject());
+
+        KtAnnotationEntry annotation =
+                factory.createAnnotationEntry("@TestId(\"" + cleanTestId + "\")");
+
+        method.addAnnotationEntry(annotation);
+    }
+
+    private String getAnnotationName(KtAnnotationEntry annotation) {
+        return annotation.getShortName() != null
+            ? annotation.getShortName().getIdentifier()
+            : "";
+    }
+
+    public static class TestMethodInfo {
+        private final String filePath;
+        private final String className;
+        private final String methodName;
+
+        public TestMethodInfo(String filePath, String className, String methodName) {
+            this.filePath = filePath;
+            this.className = className;
+            this.methodName = methodName;
+        }
+
+        public String getFilePath() {
+            return filePath;
+        }
+
+        public String getClassName() {
+            return className;
+        }
+
+        public String getMethodName() {
+            return methodName;
+        }
+    }
+}
