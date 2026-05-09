@@ -3,6 +3,7 @@ package io.testomat.service;
 import io.testomat.client.CliClient;
 import io.testomat.client.TestomatHttpClient;
 import io.testomat.exception.CliException;
+import io.testomat.model.ProcessingResult;
 import io.testomat.model.TestCase;
 import io.testomat.progressbar.LoadingSpinner;
 import io.testomat.progressbar.ProgressBar;
@@ -19,7 +20,6 @@ import org.slf4j.LoggerFactory;
 public class TestExportService {
     private static final Logger log = LoggerFactory.getLogger(TestExportService.class);
 
-    private final KotlinFileParser fileParser;
     private final TestMethodExtractor extractor;
     private final TestFrameworkDetector detector;
     private final JsonBuilder jsonBuilder;
@@ -28,7 +28,6 @@ public class TestExportService {
     private final int batchSize = 100;
 
     public TestExportService() {
-        this.fileParser = new KotlinFileParser();
         this.extractor = new TestMethodExtractor();
         this.detector = new TestFrameworkDetector();
         this.jsonBuilder = new JsonBuilder();
@@ -36,10 +35,9 @@ public class TestExportService {
         this.spinner = new LoadingSpinner("Sending test data to server...");
     }
 
-    public TestExportService(KotlinFileParser fileParser, TestMethodExtractor extractor,
+    public TestExportService(TestMethodExtractor extractor,
             TestFrameworkDetector detector, JsonBuilder jsonBuilder,
             TestomatHttpClient httpClient, LoadingSpinner spinner) {
-        this.fileParser = fileParser;
         this.extractor = extractor;
         this.detector = detector;
         this.jsonBuilder = jsonBuilder;
@@ -53,12 +51,12 @@ public class TestExportService {
             boolean structure) {
         ProcessingResult result = processAllFiles(testFiles, verbose, progressBar);
 
-        return handleProcessingResult(result.allTestCases, result.primaryFramework,
+        return handleProcessingResult(result.allTestCases(), result.primaryFramework(),
             apiKey, serverUrl, dryRun, structure);
     }
 
     private List<TestCase> collectTestCasesFromFile(File file) {
-        KtFile ktFile = fileParser.parseFile(Path.of(file.getAbsolutePath())).getKtFile();
+        KtFile ktFile = KotlinFileParser.parseFile(Path.of(file.getAbsolutePath())).getKtFile();
         if (ktFile == null) {
             return new ArrayList<>();
         }
@@ -78,13 +76,19 @@ public class TestExportService {
             String apiKey, String serverUrl, boolean structure) {
         validateExportConfig(serverUrl);
 
+        List<TestCase> filteredTestCases = allTestCases.stream()
+                .filter(testCase -> !testCase.isSkipped())
+                .toList();
+
         Stream<String> batchJsonBodies =
-                IntStream.iterate(0, i -> i < allTestCases.size(), i -> i + batchSize)
+                IntStream.iterate(0, i -> i < filteredTestCases.size(), i -> i + batchSize)
                 .mapToObj(i ->
                     jsonBuilder.buildRequestBody(
-                        allTestCases.subList(i,
-                            Math.min(i + batchSize, allTestCases.size())),
-                        framework, structure)
+                        filteredTestCases.subList(i,
+                            Math.min(i + batchSize, filteredTestCases.size())),
+                        framework,
+                        structure
+                    )
                 );
 
         String requestUrl = serverUrl + "/api/load?api_key=" + apiKey;
@@ -98,10 +102,10 @@ public class TestExportService {
             throw new CliException("Error while executing request", e);
         }
 
-        spinner.stopWithMessage("Successfully exported " + allTestCases.size()
+        spinner.stopWithMessage("Successfully exported " + filteredTestCases.size()
                 + " test methods");
 
-        return allTestCases.size();
+        return filteredTestCases.size();
     }
 
     private void printAllTestCases(List<TestCase> testCases) {
@@ -118,7 +122,7 @@ public class TestExportService {
         }
     }
 
-    private ProcessingResult processAllFiles(List<File> testFiles, boolean verbose,
+    public ProcessingResult processAllFiles(List<File> testFiles, boolean verbose,
             ProgressBar progressBar) {
         List<TestCase> allTestCases = new ArrayList<>();
         String primaryFramework = null;
@@ -152,7 +156,7 @@ public class TestExportService {
         return new ProcessingResult(allTestCases, primaryFramework);
     }
 
-    private int handleProcessingResult(List<TestCase> allTestCases, String primaryFramework,
+    public int handleProcessingResult(List<TestCase> allTestCases, String primaryFramework,
             String apiKey, String serverUrl, boolean dryRun,
             boolean structure) {
         if (allTestCases.isEmpty()) {
@@ -171,20 +175,10 @@ public class TestExportService {
     }
 
     private String detectFrameworkFromFile(File file) {
-        KtFile ktFile = fileParser.parseFile(Path.of(file.getAbsolutePath())).getKtFile();
+        KtFile ktFile = KotlinFileParser.parseFile(Path.of(file.getAbsolutePath())).getKtFile();
         if (ktFile == null) {
             return null;
         }
         return detector.detectFramework(ktFile);
-    }
-
-    private static class ProcessingResult {
-        private final List<TestCase> allTestCases;
-        private final String primaryFramework;
-
-        ProcessingResult(List<TestCase> allTestCases, String primaryFramework) {
-            this.allTestCases = allTestCases;
-            this.primaryFramework = primaryFramework;
-        }
     }
 }

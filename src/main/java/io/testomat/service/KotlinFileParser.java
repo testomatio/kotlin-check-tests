@@ -5,6 +5,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import lombok.SneakyThrows;
+import lombok.experimental.UtilityClass;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys;
@@ -24,6 +25,7 @@ import org.jetbrains.kotlin.config.LanguageVersionSettingsImpl;
 import org.jetbrains.kotlin.psi.KtFile;
 import org.jetbrains.kotlin.psi.KtPsiFactory;
 
+@UtilityClass
 public class KotlinFileParser {
 
     private static Disposable disposable;

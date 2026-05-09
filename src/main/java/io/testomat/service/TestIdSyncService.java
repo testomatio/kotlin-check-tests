@@ -33,9 +33,7 @@ public class TestIdSyncService {
         this.fileModificationService = new MinimalFileModificationService();
     }
 
-    public SyncResult syncTestIds(String apiKey, String serverUrl,
-            List<ParsedKtFile> parsedKtFiles, boolean verbose,
-            ProgressBar progressBar) {
+    public Map<String, String> syncTestIds(String apiKey, String serverUrl) {
 
         LoadingSpinner spinner = new LoadingSpinner("Fetching test data from server...");
         spinner.start();
@@ -46,6 +44,15 @@ public class TestIdSyncService {
         spinner.stopWithMessage("Received test data from server");
 
         System.out.println("Received " + testsMap.size() + " test entries from API");
+
+        return testsMap;
+    }
+
+    public SyncResult syncResult(String apiKey, String serverUrl,
+                List<ParsedKtFile> parsedKtFiles, boolean verbose,
+                ProgressBar progressBar) {
+
+        Map<String, String> testsMap = syncTestIds(apiKey, serverUrl);
 
         if (progressBar != null && testsMap.size() != progressBar.getTotal()) {
             progressBar = new ProgressBar(testsMap.size(), "Processing test IDs");
@@ -154,10 +161,6 @@ public class TestIdSyncService {
         }
 
         return processedCount;
-    }
-
-    private TestIdAnnotationManager.TestMethodInfo parseTestKey(String testKey) {
-        return parseTestKey(testKey, false);
     }
 
     private TestIdAnnotationManager.TestMethodInfo parseTestKey(String testKey, boolean verbose) {

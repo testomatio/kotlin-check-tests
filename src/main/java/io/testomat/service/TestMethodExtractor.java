@@ -1,9 +1,11 @@
 package io.testomat.service;
 
+import io.testomat.model.AnnotationBlock;
 import io.testomat.model.TestCase;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
@@ -14,58 +16,57 @@ import org.jetbrains.kotlin.psi.KtTreeVisitorVoid;
 
 public class TestMethodExtractor {
 
-    private static final Pattern COMMENT_LABEL_PATTERN =
-            Pattern.compile("@(\\w+)(?::(\\w+))?|#(\\w+)");
+    private static final Pattern TEST_ANNOTATION_PATTERN =
+            Pattern.compile("@(?:[\\w.]+\\.)?(Test|ParameterizedTest|RepeatedTest|TestFactory)\\b");
+    private static final Pattern TAG_PATTERN =
+            Pattern.compile("@Tag\\(\"([^\"]+)\"\\)");
 
     public List<TestCase> extractTestCases(KtFile file, String filepath, String framework) {
         List<TestCase> result = new ArrayList<>();
 
-        file.accept(new KtTreeVisitorVoid() {
+        String[] lines = file.getText().split("\n");
+        List<AnnotationBlock> blocks = AnnotationUtils.collectAnnotationBlocks(lines);
 
+        file.accept(new KtTreeVisitorVoid() {
             @Override
             public void visitNamedFunction(@NotNull KtNamedFunction function) {
                 super.visitNamedFunction(function);
 
-                if (!isTestMethod(function)) {
+                String header = AnnotationUtils.findHeaderForMethod(function, blocks, lines);
+
+                if (!isTestMethod(function, header)) {
                     return;
                 }
 
-                result.add(createTestCase(function, filepath, framework));
+                result.add(createTestCase(function, filepath, framework, header));
             }
         });
 
         return result;
     }
 
-    private boolean isTestMethod(KtNamedFunction method) {
-        String fileText = method.getContainingKtFile().getText();
-        String name = method.getName();
+    private boolean isTestMethod(KtNamedFunction method, String header) {
+        String methodText = method.getText();
 
-        if (name == null) {
-            return false;
-        }
-
-        int idx = fileText.indexOf("fun " + name);
-        if (idx == -1) {
-            return false;
-        }
-
-        String before = fileText.substring(Math.max(0, idx - 200), idx);
-
-        return before.contains("@Test")
-            || before.contains("@ParameterizedTest")
-            || before.contains("@RepeatedTest")
-            || before.contains("@TestFactory")
-            || before.contains("@org.junit.Test");
+        return containsTestAnnotation(header)
+            || containsTestAnnotation(methodText);
     }
 
-    private TestCase createTestCase(KtNamedFunction method, String filepath, String framework) {
-        String testId = getTestId(method).orElse("");
+    private boolean containsTestAnnotation(String text) {
+        return TEST_ANNOTATION_PATTERN.matcher(text).find();
+    }
+
+    private TestCase createTestCase(
+            KtNamedFunction method, String filepath, String framework, String header) {
+        String testId = getTestId(header).orElse("");
+        String title = getTestName(method, header);
 
         TestCase testCase = new TestCase();
-        testCase.setName(getTestName(method) + testId);
-        testCase.setCode(getMethodCode(method));
-        testCase.setSkipped(isTestSkipped(method));
+        testCase.setId(testId);
+        testCase.setName(testId.isBlank() ? title : title + " " + testId);
+        testCase.setTitle(title);
+        testCase.setCode(getMethodCode(method, header));
+        testCase.setSkipped(isTestSkipped(method, header));
         testCase.setSuites(getSuites(method));
         testCase.setLabels(getLabels(method, framework));
         testCase.setFile(PathUtils.extractRelativeFilePath(filepath));
@@ -73,123 +74,131 @@ public class TestMethodExtractor {
         return testCase;
     }
 
-    private String getTestName(KtNamedFunction method) {
+    private String getTestName(KtNamedFunction method, String header) {
+        String title = AnnotationUtils.extractTitle(header);
+
+        if (title != null && !title.isBlank()) {
+            return title;
+        }
+
         return method.getName();
     }
 
-    private String getMethodCode(KtNamedFunction method) {
-        String annotations = extractMethodHeader(method);
-        String methodText = method.getText();
+    private String getMethodCode(KtNamedFunction method, String header) {
+        String cleanHeader = normalizeHeader(header);
+        String cleanMethod = formatMethod(method.getText());
 
-        String indent = detectIndent(annotations);
-        String fixedMethod = indent + methodText.replace("\n", "\n" + indent);
-
-        return annotations + fixedMethod;
+        return cleanHeader + cleanMethod;
     }
 
-    private boolean isTestSkipped(KtNamedFunction method) {
+    private String formatMethod(String text) {
+        String[] lines = text.split("\n");
 
-        KtFile file = method.getContainingKtFile();
-        String text = file.getText();
-        List<String> lines = List.of(text.split("\n"));
+        if (lines.length == 0) {
+            return text;
+        }
 
-        int methodLine = TextUtils.getLine(method, file);
+        StringBuilder result = new StringBuilder();
 
-        for (int i = methodLine - 1; i >= 0; i--) {
-            String line = lines.get(i).trim();
+        result.append(lines[0].trim());
 
-            if (!line.startsWith("@")) {
-                if (!line.isEmpty()) {
-                    break;
-                }
+        int baseIndent = -1;
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+
+            if (line.trim().isEmpty()) {
+                result.append("\n");
                 continue;
             }
 
-            String annName = TextUtils.extractAnnotationName(line);
-
-            if ("Disabled".equals(annName) || "Ignore".equals(annName)) {
-                return true;
+            int j = 0;
+            while (j < line.length() && Character.isWhitespace(line.charAt(j))) {
+                j++;
             }
+
+            if (baseIndent == -1) {
+                baseIndent = j;
+            }
+
+            int relativeIndent = j - baseIndent;
+            if (relativeIndent < 0) {
+                relativeIndent = 0;
+            }
+
+            String trimmed = line.trim();
+
+            result.append("\n");
+
+            if (trimmed.equals("}")) {
+
+                if (i == lines.length - 1) {
+                    result.append("");
+                } else {
+                    result.append(" ".repeat(4));
+                }
+
+            } else {
+                result.append(" ".repeat(4 + relativeIndent));
+            }
+
+            result.append(trimmed);
         }
 
-        String methodName = method.getName() != null ? method.getName() : "";
-
-        return methodName.startsWith("ignore") || methodName.startsWith("skip");
+        return result.toString();
     }
 
-    private Optional<String> getTestId(KtNamedFunction method) {
+    private String normalizeHeader(String text) {
+        String[] lines = text.split("\n");
 
-        KtFile file = method.getContainingKtFile();
-        String text = file.getText();
+        StringBuilder result = new StringBuilder();
 
-        List<String> lines = List.of(text.split("\n"));
-
-        int methodLine = TextUtils.getLine(method, file);
-
-        StringBuilder annotation = new StringBuilder();
-        boolean found = false;
-
-        for (int i = methodLine - 1; i >= 0; i--) {
-            String line = lines.get(i).trim();
-
-            if (line.startsWith("@TestId")) {
-                found = true;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (i > 0) {
+                result.append("\n");
             }
-
-            if (found) {
-                annotation.insert(0, line);
-
-                if (line.contains(")")) {
-                    break;
-                }
-            }
-
-            if (!line.isEmpty() && !line.startsWith("@") && !found) {
-                break;
-            }
+            result.append(line);
         }
 
-        if (!found) {
+        return !result.isEmpty() ? result.append("\n").toString() : "";
+    }
+
+    private boolean isTestSkipped(KtNamedFunction method, @NotNull String header) {
+        if (header.contains("@Disabled") || header.contains("@Ignore")) {
+            return true;
+        }
+
+        String name = method.getName() != null ? method.getName().toLowerCase() : "";
+        return name.startsWith("ignore") || name.startsWith("skip");
+    }
+
+    private Optional<String> getTestId(String header) {
+        Matcher m = Pattern.compile("@TestId\\s*\\((.*?)\\)", Pattern.DOTALL).matcher(header);
+
+        if (!m.find()) {
             return Optional.empty();
         }
 
-        String textAnnotation = annotation.toString();
-
-        int start = textAnnotation.indexOf("(");
-        int end = textAnnotation.lastIndexOf(")");
-
-        if (start == -1 || end == -1 || start >= end) {
-            return Optional.empty();
-        }
-
-        String value = textAnnotation.substring(start + 1, end)
-                .replace("\"", "")
-                .trim();
+        String value = m.group(1).replace("\"", "").trim();
 
         if (!value.startsWith("@T")) {
             value = "@T" + value;
         }
 
-        return Optional.of(" " + value);
+        return Optional.of(value);
     }
 
     private List<String> getSuites(KtNamedFunction method) {
         List<String> suites = new ArrayList<>();
 
-        KtClass currentClass =
-                PsiTreeUtil.getParentOfType(method, KtClass.class);
-
-        List<KtClass> classHierarchy = new ArrayList<>();
+        KtClass currentClass = PsiTreeUtil.getParentOfType(method, KtClass.class);
 
         while (currentClass != null) {
-            classHierarchy.add(0, currentClass);
-            currentClass = PsiTreeUtil.getParentOfType(currentClass, KtClass.class);
-        }
-
-        for (KtClass clazz : classHierarchy) {
-            if (clazz.getName() != null) {
-                suites.add(clazz.getName());
+            if (currentClass.getName() != null) {
+                suites.add(0, currentClass.getName());
             }
+            currentClass = PsiTreeUtil.getParentOfType(currentClass, KtClass.class);
         }
 
         return suites;
@@ -206,7 +215,8 @@ public class TestMethodExtractor {
                 continue;
             }
 
-            addFrameworkLabels(labels, annName, line, framework);
+            addFrameworkLabels(labels, annName, framework);
+            addAnnotationLabels(labels, line);
         }
 
         addNamePatternLabels(method, labels);
@@ -214,212 +224,38 @@ public class TestMethodExtractor {
         return labels;
     }
 
-    private void addFrameworkLabels(
-            List<String> labels,
-            String annName,
-            String annotationLine,
-            String framework
-    ) {
-
+    private void addFrameworkLabels(List<String> labels, String annName, String framework) {
         if ("junit".equals(framework)) {
-            switch (annName) {
-                case "Test":
-                    labels.add("unit");
-                    break;
-
-                case "IntegrationTest":
-                case "SpringBootTest":
-                    labels.add("integration");
-                    break;
-
-                case "ParameterizedTest":
-                    labels.add("parameterized");
-                    break;
-
-                case "RepeatedTest":
-                    labels.add("repeated");
-                    break;
-
-                case "TestFactory":
-                    labels.add("dynamic");
-                    break;
-
-                case "Disabled":
-                case "Ignore":
-                    labels.add("disabled");
-                    break;
-
-                case "Timeout":
-                    labels.add("timeout");
-                    break;
-
-                case "WebMvcTest":
-                    labels.add("web");
-                    break;
-
-                case "DataJpaTest":
-                    labels.add("jpa");
-                    break;
-
-                case "JsonTest":
-                    labels.add("json");
-                    break;
-
-                case "Tag":
-                    extractValue(annotationLine).ifPresent(labels::add);
-                    break;
-
-                default:
-                    if (annName.endsWith("Test")) {
-                        labels.add(
-                                annName.toLowerCase().replace("test", "")
-                        );
-                    }
+            if ("Test".equals(annName)) {
+                labels.add("unit");
             }
         } else if ("testng".equals(framework)) {
-            switch (annName) {
-                case "Test":
-                    labels.add("unit");
-
-                    extractGroups(annotationLine).ifPresent(groups -> {
-                        for (String group : groups.split(",")) {
-                            labels.add(group.trim());
-                        }
-                    });
-                    break;
-
-                case "DataProvider":
-                    labels.add("parameterized");
-                    break;
-
-                default:
-                    if (annName.endsWith("Test")) {
-                        labels.add(
-                                annName.toLowerCase().replace("test", "")
-                        );
-                    }
+            if ("Test".equals(annName)) {
+                labels.add("unit");
             }
         }
     }
 
     private void addNamePatternLabels(KtNamedFunction method, List<String> labels) {
-        String methodName = method.getName() != null
-                ? method.getName().toLowerCase() : "";
+        String name = method.getName() != null ? method.getName().toLowerCase() : "";
 
-        if (methodName.contains("integration")) {
+        if (name.contains("integration")) {
             labels.add("integration");
         }
-        if (methodName.contains("smoke")) {
+        if (name.contains("smoke")) {
             labels.add("smoke");
         }
-        if (methodName.contains("performance")) {
-            labels.add("performance");
-        }
-        if (methodName.contains("acceptance")) {
-            labels.add("acceptance");
-        }
-        if (methodName.contains("regression")) {
-            labels.add("regression");
-        }
     }
 
-    private Optional<String> extractValue(String line) {
-        int start = line.indexOf("(");
-        int end = line.lastIndexOf(")");
+    private void addAnnotationLabels(List<String> labels, String line) {
+        Matcher matcher = TAG_PATTERN.matcher(line);
 
-        if (start == -1 || end == -1 || start >= end) {
-            return Optional.empty();
-        }
+        if (matcher.find()) {
+            String value = matcher.group(1);
 
-        String value = line.substring(start + 1, end)
-                .replace("\"", "")
-                .trim();
-
-        return Optional.of(value);
-    }
-
-    private Optional<String> extractGroups(String line) {
-        int idx = line.indexOf("groups");
-
-        if (idx == -1) {
-            return Optional.empty();
-        }
-
-        int start = line.indexOf("{", idx);
-        int end = line.indexOf("}", idx);
-
-        if (start == -1 || end == -1 || start >= end) {
-            return Optional.empty();
-        }
-
-        String value = line.substring(start + 1, end)
-                .replace("\"", "")
-                .trim();
-
-        return Optional.of(value);
-    }
-
-    private String extractMethodHeader(KtNamedFunction method) {
-        KtFile file = method.getContainingKtFile();
-        List<String> lines = List.of(file.getText().split("\n"));
-        int methodLine = TextUtils.getLine(method, file);
-
-        StringBuilder header = new StringBuilder();
-        boolean insideAnnotation = false;
-
-        for (int i = methodLine - 1; i >= 0; i--) {
-            String line = lines.get(i);
-            String trimmed = line.trim();
-
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-
-            if (!trimmed.startsWith("@")
-                    && !trimmed.startsWith(")")
-                    && !insideAnnotation) {
-                break;
-            }
-
-            if (trimmed.endsWith(")")) {
-                insideAnnotation = true;
-                header.insert(0, line + "\n");
-                continue;
-            }
-
-            if (insideAnnotation) {
-                header.insert(0, line + "\n");
-
-                if (trimmed.startsWith("@")) {
-                    insideAnnotation = false;
-                }
-
-                continue;
-            }
-
-            if (trimmed.startsWith("@")) {
-                header.insert(0, line + "\n");
+            if (!labels.contains(value)) {
+                labels.add(value);
             }
         }
-
-        return header.toString();
-    }
-
-    private String detectIndent(String text) {
-        String[] lines = text.split("\n");
-
-        for (int i = lines.length - 1; i >= 0; i--) {
-            String line = lines[i];
-
-            if (!line.trim().isEmpty()) {
-                int j = 0;
-                while (j < line.length() && Character.isWhitespace(line.charAt(j))) {
-                    j++;
-                }
-                return line.substring(0, j);
-            }
-        }
-
-        return "";
     }
 }

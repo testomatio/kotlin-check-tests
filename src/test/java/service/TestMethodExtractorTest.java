@@ -169,4 +169,115 @@ class TestMethodExtractorTest {
 
         assertEquals(0, result.size());
     }
+
+    @Test
+    void shouldUseTitleAnnotationAsTestName() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @Title("Login test")
+        @Test
+        fun testMethod() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        assertEquals(1, result.size());
+
+        assertEquals("Login test", result.get(0).getTitle());
+
+        assertTrue(
+            result.get(0).getName().startsWith("Login test")
+        );
+    }
+
+    @Test
+    void shouldExtractMultilineTestId() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @TestId(
+            "123"
+        )
+        @Test
+        fun testMethod() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        assertTrue(result.get(0).getName().contains("@T123"));
+    }
+
+    @Test
+    void shouldDetectFullyQualifiedJUnitTest() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @org.junit.Test
+        fun testMethod() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void shouldExtractTopLevelFunction() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @Test
+        fun topLevelTest() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        assertEquals(1, result.size());
+
+        assertTrue(result.get(0).getSuites().isEmpty());
+    }
+
+    @Test
+    void shouldExtractMultipleTests() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @Test
+        fun first() {}
+
+        @Test
+        fun second() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        assertEquals(2, result.size());
+    }
+
+    @Test
+    void shouldNotDetectNonTestAnnotationContainingTestWord() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @NotTest
+        fun helper() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        assertTrue(result.isEmpty());
+    }
 }
