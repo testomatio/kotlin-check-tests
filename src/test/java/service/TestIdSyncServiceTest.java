@@ -65,7 +65,7 @@ class TestIdSyncServiceTest {
             .thenReturn(Optional.of(method));
 
         TestIdSyncService.SyncResult result =
-            service.syncTestIds("key", "url", List.of(parsedKtFile), false, null);
+            service.syncResult("key", "url", List.of(parsedKtFile), false, null);
 
         assertEquals(1, result.getProcessedCount());
         assertEquals(1, result.getModifiedFilesCount());
@@ -90,7 +90,7 @@ class TestIdSyncServiceTest {
             .thenReturn(Optional.empty());
 
         TestIdSyncService.SyncResult result =
-            service.syncTestIds("key", "url", List.of(), false, null);
+            service.syncResult("key", "url", List.of(), false, null);
 
         assertEquals(0, result.getProcessedCount());
         assertEquals(0, result.getModifiedFilesCount());
@@ -112,7 +112,7 @@ class TestIdSyncServiceTest {
             .thenReturn(Map.of("invalid-key", "1"));
 
         TestIdSyncService.SyncResult result =
-            service.syncTestIds("key", "url", List.of(), false, null);
+            service.syncResult("key", "url", List.of(), false, null);
 
         assertEquals(0, result.getProcessedCount());
     }
@@ -156,10 +156,10 @@ class TestIdSyncServiceTest {
             .thenReturn(Optional.of(m2));
 
         TestIdSyncService.SyncResult result =
-            service.syncTestIds("key", "url", List.of(parsedKtFile), false, null);
+            service.syncResult("key", "url", List.of(parsedKtFile), false, null);
 
         assertEquals(2, result.getProcessedCount());
-        assertEquals(1, result.getModifiedFilesCount()); // оба метода в одном файле
+        assertEquals(1, result.getModifiedFilesCount());
     }
 
     @Test
@@ -196,7 +196,7 @@ class TestIdSyncServiceTest {
             .thenReturn(Optional.of(method));
 
         TestIdSyncService.SyncResult result =
-            service.syncTestIds("key", "url", List.of(parsedKtFile), false, null);
+            service.syncResult("key", "url", List.of(parsedKtFile), false, null);
 
         assertEquals(1, result.getProcessedCount());
         assertEquals(1, result.getModifiedFilesCount());

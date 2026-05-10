@@ -19,7 +19,6 @@ import picocli.CommandLine;
         "Pulls IDs into your codebase from testomat.io")
 public class PullIdsCommand implements Runnable {
     private static final String DEFAULT_URL = "https://app.testomat.io";
-    private final KotlinFileParser kotlinFileParser;
 
     @CommandLine.Option(
             names = {"--directory", "-d"},
@@ -48,11 +47,6 @@ public class PullIdsCommand implements Runnable {
     private boolean structure = false;
 
     public PullIdsCommand() {
-        this.kotlinFileParser = new KotlinFileParser();
-    }
-
-    public PullIdsCommand(KotlinFileParser kotlinFileParser) {
-        this.kotlinFileParser = kotlinFileParser;
     }
 
     @Override
@@ -76,7 +70,7 @@ public class PullIdsCommand implements Runnable {
 
         ProgressBar progressBar = new ProgressBar(100, "Processing test IDs");
         TestIdSyncService.SyncResult result = 
-                syncService.syncTestIds(apiKey, serverUrl, parsedKtFile, verbose, progressBar);
+                syncService.syncResult(apiKey, serverUrl, parsedKtFile, verbose, progressBar);
 
         System.out.println("Processed " + result.getProcessedCount() + " test methods");
         System.out.println("Saved " + result.getModifiedFilesCount() + " modified files");

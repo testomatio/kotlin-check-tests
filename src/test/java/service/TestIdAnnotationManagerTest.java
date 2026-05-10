@@ -124,7 +124,6 @@ class TestIdAnnotationManagerTest {
             }
         """);
 
-        // путь отличается, но совпадает окончание
         TestMethodInfo info = new TestMethodInfo(
             tempDir.resolve("MyTest.kt").toString(),
             "MyTest",

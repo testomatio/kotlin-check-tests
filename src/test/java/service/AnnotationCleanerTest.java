@@ -210,4 +210,113 @@ class AnnotationCleanerTest {
 
         assertFalse(updated.contains("@TestId"));
     }
+
+    @Test
+    void shouldDoNothingWhenNoTestIdPresent() throws IOException {
+        String code = """
+            fun test() {}
+        """;
+
+        ParsedKtFile parsedKtFile = createparsedKtFile(code);
+
+        CleanupResult result =
+            cleaner.cleanTestIdAnnotations(parsedKtFile, false);
+
+        String updated =
+            Files.readString(parsedKtFile.getPath());
+
+        assertEquals(code, updated);
+
+        assertEquals(0, result.getRemovedAnnotations());
+        assertEquals(0, result.getRemovedImports());
+    }
+
+    @Test
+    void shouldRemoveOnlyTestIdImport() throws IOException {
+        String code = """
+            import kotlin.test.Test
+            import io.testomat.core.annotation.TestId
+            import kotlin.collections.List
+
+            fun test() {}
+        """;
+
+        ParsedKtFile parsedKtFile = createparsedKtFile(code);
+
+        cleaner.cleanTestIdAnnotations(parsedKtFile, false);
+
+        String updated =
+            Files.readString(parsedKtFile.getPath());
+
+        assertFalse(updated.contains(
+            "import io.testomat.core.annotation.TestId"
+        ));
+
+        assertTrue(updated.contains(
+            "import kotlin.test.Test"
+        ));
+
+        assertTrue(updated.contains(
+            "import kotlin.collections.List"
+        ));
+    }
+
+    @Test
+    void shouldHandleWindowsLineEndings() throws IOException {
+        String code =
+            "import io.testomat.core.annotation.TestId\r\n\r\n"
+                + "@TestId(\"123\")\r\n"
+                + "fun test() {}\r\n";
+
+        ParsedKtFile parsedKtFile = createparsedKtFile(code);
+
+        cleaner.cleanTestIdAnnotations(parsedKtFile, false);
+
+        String updated =
+            Files.readString(parsedKtFile.getPath());
+
+        assertFalse(updated.contains("@TestId"));
+        assertFalse(updated.contains(
+            "import io.testomat.core.annotation.TestId"
+        ));
+    }
+
+    @Test
+    void shouldRemoveIndentedAnnotation() throws IOException {
+        String code = """
+            class TestClass {
+
+                @TestId("123")
+                fun test() {}
+            }
+        """;
+
+        ParsedKtFile parsedKtFile = createparsedKtFile(code);
+
+        cleaner.cleanTestIdAnnotations(parsedKtFile, false);
+
+        String updated =
+            Files.readString(parsedKtFile.getPath());
+
+        assertFalse(updated.contains("@TestId"));
+
+        assertTrue(updated.contains("fun test()"));
+    }
+
+    @Test
+    void shouldRemoveInlineAnnotation() throws IOException {
+        String code = """
+            @TestId("123") fun test() {}
+        """;
+
+        ParsedKtFile parsedKtFile = createparsedKtFile(code);
+
+        cleaner.cleanTestIdAnnotations(parsedKtFile, false);
+
+        String updated =
+            Files.readString(parsedKtFile.getPath());
+
+        assertFalse(updated.contains("@TestId"));
+        assertTrue(updated.contains("fun test()"));
+    }
 }

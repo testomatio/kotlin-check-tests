@@ -1,5 +1,6 @@
 package io.testomat.service;
 
+import io.testomat.model.AnnotationBlock;
 import io.testomat.model.ParsedKtFile;
 import java.nio.file.Paths;
 import java.util.Collection;
@@ -127,14 +128,30 @@ public class TestIdAnnotationManager {
     }
 
     private List<KtNamedFunction> findMethodsInParsedKtFile(
-            KtFile ktFile, TestMethodInfo methodInfo, boolean verbose) {
+            KtFile ktFile,
+            TestMethodInfo methodInfo,
+            boolean verbose
+    ) {
+
+        String[] lines = ktFile.getText().split("\n");
+
+        List<AnnotationBlock> blocks = AnnotationUtils.collectAnnotationBlocks(lines);
 
         Collection<KtNamedFunction> allMethods =
                 PsiTreeUtil.findChildrenOfType(ktFile, KtNamedFunction.class);
 
         List<KtNamedFunction> matchingMethods = allMethods.stream()
-                .filter(m -> methodInfo.getMethodName().equals(m.getName()))
-                .filter(m -> isMethodInCorrectClass(m, methodInfo.getClassName(), verbose))
+                .filter(m -> matchesByNameOrTitle(
+                m,
+                methodInfo.getMethodName(),
+                blocks,
+                lines
+            ))
+                .filter(m -> isMethodInCorrectClass(
+                m,
+                methodInfo.getClassName(),
+                verbose
+            ))
                 .collect(Collectors.toList());
 
         if (verbose) {
@@ -143,6 +160,28 @@ public class TestIdAnnotationManager {
         }
 
         return matchingMethods;
+    }
+
+    private boolean matchesByNameOrTitle(
+            KtNamedFunction method,
+            String expectedName,
+            List<AnnotationBlock> blocks,
+            String[] lines
+    ) {
+
+        if (expectedName.equals(method.getName())) {
+            return true;
+        }
+
+        String block = AnnotationUtils.findHeaderForMethod(method, blocks, lines);
+
+        if (block == null) {
+            return false;
+        }
+
+        String title = AnnotationUtils.extractTitle(block);
+
+        return title != null && expectedName.equals(title);
     }
 
     private boolean isMethodInCorrectClass(KtNamedFunction method, String expectedClassName,
@@ -185,7 +224,6 @@ public class TestIdAnnotationManager {
     }
 
     private void addNewTestIdAnnotation(KtNamedFunction method, String cleanTestId) {
-
         KtPsiFactory factory = new KtPsiFactory(method.getProject());
 
         KtAnnotationEntry annotation =

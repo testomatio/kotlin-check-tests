@@ -21,6 +21,12 @@ public final class AnnotationScanner {
 
         List<String> result = new ArrayList<>();
 
+        String currentLine = lines.get(methodLine).trim();
+
+        if (currentLine.startsWith("@")) {
+            result.add(currentLine);
+        }
+
         for (int i = methodLine - 1; i >= 0; i--) {
             String line = lines.get(i).trim();
 
