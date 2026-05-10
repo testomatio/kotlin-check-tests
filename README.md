@@ -43,6 +43,7 @@ Will dry run if apikey is not provided.
 ### `sync`
 
 Executes tests code to the Testomat.io and pull new/updated IDs from the server into your codebase.
+If the test code does not exist in Testomat.io, it will not be uploaded.
 
 Convenience command for typical workflow.
 
