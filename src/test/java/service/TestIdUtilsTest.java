@@ -51,6 +51,18 @@ class TestIdUtilsTest {
     }
 
     @Test
+    void shouldMatchWhenNoTestIdImportDespiteOtherImports() throws Exception {
+        KtFile ktFile = createFile("""
+            import org.junit.jupiter.api.Test
+
+            @TestId("1")
+            fun test() {}
+        """);
+
+        assertTrue(TestIdUtils.isTestIdAnnotation(firstAnnotation(ktFile), ktFile));
+    }
+
+    @Test
     void shouldMatchFullyQualifiedAnnotation() throws Exception {
         KtFile ktFile = createFile("""
             @io.testomat.core.annotation.TestId("1")

@@ -1,6 +1,5 @@
 package io.testomat.service;
 
-import java.util.List;
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtFile;
 import org.jetbrains.kotlin.psi.KtImportDirective;
@@ -24,13 +23,10 @@ public final class TestIdUtils {
             return true;
         }
 
-        List<KtImportDirective> imports = ktFile.getImportDirectives();
+        boolean hasTestomatImport = false;
+        boolean hasForeignTestIdImport = false;
 
-        if (imports.isEmpty()) {
-            return true;
-        }
-
-        for (KtImportDirective importDirective : imports) {
+        for (KtImportDirective importDirective : ktFile.getImportDirectives()) {
             if (importDirective.getImportedFqName() == null) {
                 continue;
             }
@@ -38,10 +34,12 @@ public final class TestIdUtils {
             String fqName = importDirective.getImportedFqName().asString();
 
             if (TEST_ID_FQN.equals(fqName) || TEST_ID_WILDCARD_IMPORT.equals(fqName)) {
-                return true;
+                hasTestomatImport = true;
+            } else if (fqName.endsWith(".TestId") || fqName.equals(TEST_ID_SHORT_NAME)) {
+                hasForeignTestIdImport = true;
             }
         }
 
-        return false;
+        return hasTestomatImport || !hasForeignTestIdImport;
     }
 }

@@ -23,6 +23,53 @@ class TestIdSyncServiceTest {
     @TempDir
     Path tempDir;
 
+    @Test
+    void shouldSkipSuiteEntries() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        Map<String, String> apiMap = new HashMap<>();
+        apiMap.put("test.kt#MyClass", "@Ssuite-id");
+        apiMap.put("test.kt#MyClass#testMethod", "@Tabc123");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(apiMap);
+
+        ParsedKtFile parsedKtFile = createParsedFile("""
+            import org.junit.jupiter.api.Test
+
+            class MyClass {
+                fun testMethod() {}
+            }
+        """);
+
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        TestIdSyncService.SyncResult result =
+            service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        assertEquals(1, result.getProcessedCount());
+
+        String updated = Files.readString(parsedKtFile.getPath());
+
+        assertTrue(updated.contains("@TestId(\"abc123\")"));
+        assertFalse(updated.contains("suite-id"));
+    }
+
     private ParsedKtFile createParsedFile(String code) throws Exception {
         Path file = tempDir.resolve("test.kt");
         Files.writeString(file, code);
@@ -115,6 +162,55 @@ class TestIdSyncServiceTest {
             service.syncResult("key", "url", List.of(), false, null);
 
         assertEquals(0, result.getProcessedCount());
+    }
+
+    @Test
+    void shouldProcessServerKeyVariantsOnce() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        Map<String, String> apiMap = new HashMap<>();
+        apiMap.put("test.kt#MyClass#testMethod", "same-id");
+        apiMap.put("MyClass#testMethod", "same-id");
+        apiMap.put("testMethod", "same-id");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(apiMap);
+
+        ParsedKtFile parsedKtFile = createParsedFile("""
+            import org.junit.jupiter.api.Test
+
+            class MyClass {
+                fun testMethod() {}
+            }
+        """);
+
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        TestIdSyncService.SyncResult result =
+            service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        assertEquals(1, result.getProcessedCount());
+        assertEquals(1, result.getModifiedFilesCount());
+
+        String updated = Files.readString(parsedKtFile.getPath());
+
+        int count = updated.split("@TestId", -1).length - 1;
+        assertEquals(1, count);
     }
 
     @Test
@@ -291,5 +387,183 @@ class TestIdSyncServiceTest {
 
         int count = updated.split("@TestId", -1).length - 1;
         assertEquals(1, count);
+    }
+
+    @Test
+    void shouldReplaceExistingTestIdWhenImportMissing() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(Map.of("test.kt#MyClass#testMethod", "new-id"));
+
+        ParsedKtFile parsedKtFile = createParsedFile("""
+            import org.junit.jupiter.api.Test
+
+            class MyClass {
+                @TestId("old-id")
+                fun testMethod() {}
+            }
+        """);
+
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        String updated = Files.readString(parsedKtFile.getPath());
+
+        assertFalse(updated.contains("old-id"));
+        assertTrue(updated.contains("@TestId(\"new-id\")"));
+        assertTrue(updated.contains("import io.testomat.core.annotation.TestId"));
+
+        int count = updated.split("@TestId", -1).length - 1;
+        assertEquals(1, count);
+    }
+
+    @Test
+    void shouldReplaceTestIdInCrLfFile() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(Map.of("test.kt#MyClass#testMethod", "new-id"));
+
+        Path filePath = tempDir.resolve("test.kt");
+        String content = "import org.junit.jupiter.api.Test\r\n"
+                + "\r\n"
+                + "class MyClass {\r\n"
+                + "    @TestId(\"old-id\")\r\n"
+                + "    fun testMethod() {}\r\n"
+                + "}\r\n";
+        Files.writeString(filePath, content);
+
+        ParsedKtFile parsedKtFile = KotlinFileParser.parseFile(filePath);
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        String updated = Files.readString(filePath);
+
+        int count = updated.split("@TestId", -1).length - 1;
+        assertEquals(1, count);
+        assertTrue(updated.contains("@TestId(\"new-id\")"));
+    }
+
+    @Test
+    void shouldNotAccumulateDuplicatesAcrossRuns() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(Map.of("test.kt#MyClass#testMethod", "some-id"));
+
+        Path filePath = tempDir.resolve("test.kt");
+        Files.writeString(filePath, """
+            import org.junit.jupiter.api.Test
+
+            class MyClass {
+                fun testMethod() {}
+            }
+        """);
+
+        for (int run = 0; run < 3; run++) {
+            ParsedKtFile parsedKtFile = KotlinFileParser.parseFile(filePath);
+            KtFile file = parsedKtFile.getKtFile();
+
+            KtNamedFunction method =
+                PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                    .iterator().next();
+
+            when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(method));
+
+            service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+        }
+
+        String updated = Files.readString(filePath);
+
+        int count = updated.split("@TestId", -1).length - 1;
+        assertEquals(1, count);
+    }
+
+    @Test
+    void shouldCollapseExistingDuplicatesToSingle() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(Map.of("test.kt#MyClass#testMethod", "fresh-id"));
+
+        ParsedKtFile parsedKtFile = createParsedFile("""
+            import org.junit.jupiter.api.Test
+            import io.testomat.core.annotation.TestId
+
+            class MyClass {
+                @TestId("dup")
+                @TestId("dup")
+                @TestId("dup")
+                @TestId("dup")
+                fun testMethod() {}
+            }
+        """);
+
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        String updated = Files.readString(parsedKtFile.getPath());
+
+        int count = updated.split("@TestId", -1).length - 1;
+        assertEquals(1, count);
+        assertTrue(updated.contains("@TestId(\"fresh-id\")"));
     }
 }

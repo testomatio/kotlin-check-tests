@@ -5,9 +5,11 @@ import io.testomat.model.ParsedKtFile;
 import io.testomat.progressbar.LoadingSpinner;
 import io.testomat.progressbar.ProgressBar;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.jetbrains.kotlin.psi.KtFile;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
 
@@ -16,9 +18,9 @@ public class TestIdSyncService {
     private static final int PATH_INDEX = 0;
     private static final int CLASS_NAME_INDEX = 1;
     private static final int METHOD_NAME_INDEX = 2;
-    private static final int EXPECTED_PARTS_COUNT = 3;
     private static final String SPLIT_DELIMITER = "#";
     private static final String TEST_ID_IMPORT = "io.testomat.core.annotation.TestId";
+    private static final String TEST_ID_PREFIX = "@T";
 
     private final TestomatHttpClient httpClient;
     private final ResponseParser responseParser;
@@ -35,15 +37,22 @@ public class TestIdSyncService {
 
     public Map<String, String> syncTestIds(String apiKey, String serverUrl) {
 
-        LoadingSpinner spinner = new LoadingSpinner("Fetching test data from server...");
+        LoadingSpinner spinner = new LoadingSpinner("Fetching test data from " + serverUrl + "...");
         spinner.start();
 
         String response = httpClient.sendGetRequest(apiKey, serverUrl);
         Map<String, String> testsMap = responseParser.parseTestsFromResponse(response);
 
-        spinner.stopWithMessage("Received test data from server");
+        spinner.stopWithMessage("Received test data from " + serverUrl);
 
-        System.out.println("Received " + testsMap.size() + " test entries from API");
+        System.out.println("Received " + testsMap.size() + " Kotlin test entries from API (server: "
+                + serverUrl + ")");
+
+        if (testsMap.isEmpty()) {
+            System.out.println("No Kotlin tests were imported to this project. "
+                    + "If you run import/pull-ids with a different --apikey or --url "
+                    + "than import, IDs will not arrive.");
+        }
 
         return testsMap;
     }
@@ -53,6 +62,12 @@ public class TestIdSyncService {
                 ProgressBar progressBar) {
 
         Map<String, String> testsMap = syncTestIds(apiKey, serverUrl);
+
+        if (testsMap.isEmpty()) {
+            System.out.println("No Kotlin tests found on the server for this project. "
+                    + "Make sure the tests were imported first (run import or sync) "
+                    + "with the same API key.");
+        }
 
         if (progressBar != null && testsMap.size() != progressBar.getTotal()) {
             progressBar = new ProgressBar(testsMap.size(), "Processing test IDs");
@@ -79,6 +94,7 @@ public class TestIdSyncService {
         int processedCount = 0;
         int skippedCount = 0;
         int currentEntry = 0;
+        Set<String> seenIds = new HashSet<>();
 
         for (Map.Entry<String, String> testEntry : testsMap.entrySet()) {
             currentEntry++;
@@ -86,10 +102,30 @@ public class TestIdSyncService {
             String testKey = testEntry.getKey();
             String testId = testEntry.getValue();
 
+            if (testId == null
+                    || (testId.startsWith("@") && !testId.startsWith(TEST_ID_PREFIX))) {
+                if (verbose) {
+                    System.out.println("  Skipped non-test entry (suite id): " + testKey
+                            + " -> " + testId);
+                }
+                continue;
+            }
+
+            if (!seenIds.add(testId)) {
+                if (verbose) {
+                    System.out.println("  Already processed id " + testId
+                            + ", skipping duplicate key: " + testKey);
+                }
+                continue;
+            }
+
             TestIdAnnotationManager.TestMethodInfo methodInfo =
                     parseTestKey(testKey, verbose);
 
             if (methodInfo == null) {
+                if (verbose) {
+                    System.out.println("  Skipped: invalid key format: " + testKey);
+                }
                 skippedCount++;
                 continue;
             }
@@ -140,10 +176,16 @@ public class TestIdSyncService {
 
                     processedCount++;
                 } else {
+                    if (verbose) {
+                        System.out.println("  Skipped: no containing file for key: " + testKey);
+                    }
                     skippedCount++;
                 }
 
             } else {
+                if (verbose) {
+                    System.out.println("  Skipped: method not found for key: " + testKey);
+                }
                 skippedCount++;
             }
 
@@ -167,16 +209,27 @@ public class TestIdSyncService {
 
         String[] parts = testKey.split(SPLIT_DELIMITER);
 
-        if (parts.length != EXPECTED_PARTS_COUNT) {
-            return null;
+        if (parts.length == 3) {
+            return new TestIdAnnotationManager.TestMethodInfo(
+                parts[PATH_INDEX].trim(), parts[CLASS_NAME_INDEX].trim(),
+                parts[METHOD_NAME_INDEX].trim());
         }
 
-        String filePath = parts[PATH_INDEX].trim();
-        String className = parts[CLASS_NAME_INDEX].trim();
-        String methodName = parts[METHOD_NAME_INDEX].trim();
+        if (parts.length == 2) {
+            return new TestIdAnnotationManager.TestMethodInfo(
+                null, parts[0].trim(), parts[1].trim());
+        }
 
-        return new TestIdAnnotationManager.TestMethodInfo(
-            filePath, className, methodName);
+        if (parts.length == 1) {
+            return new TestIdAnnotationManager.TestMethodInfo(
+                null, null, parts[0].trim());
+        }
+
+        if (verbose) {
+            System.out.println("  Skipped: invalid key format: " + testKey);
+        }
+
+        return null;
     }
 
     private int applyFileModifications(

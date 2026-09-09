@@ -3,6 +3,7 @@ package io.testomat.service;
 import io.testomat.model.AnnotationBlock;
 import io.testomat.model.ParsedKtFile;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -34,10 +35,12 @@ public class TestIdAnnotationManager {
 
         Optional<KtNamedFunction> result;
 
-        String expectedFileName = extractFileName(methodInfo.getFilePath());
+        String expectedFileName = methodInfo.getFilePath() != null
+                ? extractFileName(methodInfo.getFilePath()) : null;
 
         result = parsedKtFiles.stream()
-            .filter(ktFile -> isMatchingFile(ktFile.getKtFile(), expectedFileName, verbose))
+            .filter(file -> expectedFileName == null
+                    || isMatchingFile(file.getKtFile(), expectedFileName, verbose))
             .flatMap(ktFile ->
                 findMethodsInParsedKtFile(ktFile.getKtFile(), methodInfo, verbose).stream())
             .findFirst();
@@ -47,6 +50,13 @@ public class TestIdAnnotationManager {
                 System.out.println("  Found method using exact filename match");
             }
             return result;
+        }
+
+        if (methodInfo.getFilePath() == null) {
+            if (verbose) {
+                System.out.println("  Not found key without file path");
+            }
+            return Optional.empty();
         }
 
         result = parsedKtFiles.stream()
@@ -207,22 +217,76 @@ public class TestIdAnnotationManager {
         KtClass clazz = PsiTreeUtil.getParentOfType(method, KtClass.class);
 
         if (clazz != null) {
-            String actual = clazz.getName();
-            boolean matches = expectedClassName.equals(actual);
+            boolean matches = matchesClassChain(method, clazz, expectedClassName);
 
             if (verbose) {
-                System.out.println("      Class match: " + actual + " vs "
+                System.out.println("      Class match: " + clazz.getName() + " vs "
                         + expectedClassName + " -> " + matches);
             }
 
             return matches;
         }
 
+        boolean matches = isTopLevelClassMatch(method, expectedClassName);
+
         if (verbose) {
-            System.out.println("      Method has no containing class");
+            System.out.println("      Top-level method, expected class " + expectedClassName
+                    + " -> " + matches);
         }
 
-        return false;
+        return matches;
+    }
+
+    private boolean matchesClassChain(KtNamedFunction method, KtClass clazz,
+            String expectedClassName) {
+        if (expectedClassName == null || expectedClassName.isEmpty()
+                || "Unknown".equals(expectedClassName)) {
+            return true;
+        }
+
+        List<String> expectedChain = tokenizeClassName(expectedClassName);
+        List<String> actualChain = getClassChain(method);
+
+        return expectedChain.equals(actualChain);
+    }
+
+    private List<String> getClassChain(KtNamedFunction method) {
+        List<String> chain = new ArrayList<>();
+
+        KtClass currentClass = PsiTreeUtil.getParentOfType(method, KtClass.class);
+
+        while (currentClass != null) {
+            if (currentClass.getName() != null) {
+                chain.add(0, currentClass.getName());
+            }
+            currentClass = PsiTreeUtil.getParentOfType(currentClass, KtClass.class);
+        }
+
+        return chain;
+    }
+
+    private List<String> tokenizeClassName(String className) {
+        String normalized = className.replaceAll("[^\\p{L}\\p{N}]+", " ").trim();
+
+        if (normalized.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        return new ArrayList<>(List.of(normalized.split("\\s+")));
+    }
+
+    private boolean isTopLevelClassMatch(KtNamedFunction method, String expectedClassName) {
+        if (expectedClassName == null || expectedClassName.isEmpty()
+                || "Unknown".equals(expectedClassName)) {
+            return true;
+        }
+
+        String fileName = method.getContainingKtFile().getName();
+        String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+
+        return expectedClassName.equals(baseName)
+                || expectedClassName.equals(baseName + "Kt")
+                || tokenizeClassName(expectedClassName).size() <= 3;
     }
 
     private String extractFileName(String filePath) {

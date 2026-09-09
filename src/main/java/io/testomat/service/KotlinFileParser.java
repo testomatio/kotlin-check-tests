@@ -99,7 +99,9 @@ public class KotlinFileParser {
     public static ParsedKtFile parseFile(Path path) {
         init();
 
-        String content = Files.readString(path);
+        String content = Files.readString(path)
+                .replace("\r\n", "\n")
+                .replace('\r', '\n');
         String fileName = path.getFileName().toString();
 
         KtFile ktFile = psiFactory.createFile(fileName, content);
