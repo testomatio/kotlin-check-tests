@@ -81,7 +81,11 @@ public class TestExportService {
         try {
             batchJsonBodies.forEach(jsonBody ->
                     httpClient.sendPostRequest(requestUrl, jsonBody));
+        } catch (CliException e) {
+            spinner.stop();
+            throw e;
         } catch (Exception e) {
+            spinner.stop();
             throw new CliException("Error while executing request", e);
         }
 

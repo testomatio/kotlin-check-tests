@@ -1,6 +1,7 @@
 package io.testomat.commands;
 
 import io.testomat.client.CliClient;
+import io.testomat.exception.CliException;
 import io.testomat.model.ParsedKtFile;
 import io.testomat.progressbar.ProgressBar;
 import io.testomat.service.KotlinFileParser;
@@ -57,28 +58,35 @@ public class PullIdsCommand implements Runnable {
             return;
         }
 
-        if (serverUrl == null || serverUrl.trim().isEmpty()) {
-            String envUrl = System.getenv("TESTOMATIO_URL");
-            if (envUrl == null || envUrl.trim().isEmpty()) {
-                serverUrl = DEFAULT_URL;
-            } else {
-                serverUrl = envUrl;
+        try {
+            if (serverUrl == null || serverUrl.trim().isEmpty()) {
+                String envUrl = System.getenv("TESTOMATIO_URL");
+                if (envUrl == null || envUrl.trim().isEmpty()) {
+                    serverUrl = DEFAULT_URL;
+                } else {
+                    serverUrl = envUrl;
+                }
+            }
+
+            TestIdSyncService syncService = createSyncService();
+            List<ParsedKtFile> parsedKtFile = loadParsedKtFiles();
+
+            if (verbose) {
+                System.out.println("Found " + parsedKtFile.size() + " compilation units");
+            }
+
+            ProgressBar progressBar = new ProgressBar(100, "Processing test IDs");
+            TestIdSyncService.SyncResult result =
+                    syncService.syncResult(apiKey, serverUrl, parsedKtFile, verbose, progressBar);
+
+            System.out.println("Processed " + result.getProcessedCount() + " test methods");
+            System.out.println("Saved " + result.getModifiedFilesCount() + " modified files");
+        } catch (Exception e) {
+            System.err.println("pull-ids failed: " + CliException.describe(e));
+            if (verbose) {
+                e.printStackTrace();
             }
         }
-
-        TestIdSyncService syncService = createSyncService();
-        List<ParsedKtFile> parsedKtFile = loadParsedKtFiles();
-
-        if (verbose) {
-            System.out.println("Found " + parsedKtFile.size() + " compilation units");
-        }
-
-        ProgressBar progressBar = new ProgressBar(100, "Processing test IDs");
-        TestIdSyncService.SyncResult result =
-                syncService.syncResult(apiKey, serverUrl, parsedKtFile, verbose, progressBar);
-
-        System.out.println("Processed " + result.getProcessedCount() + " test methods");
-        System.out.println("Saved " + result.getModifiedFilesCount() + " modified files");
     }
 
     private TestIdSyncService createSyncService() {

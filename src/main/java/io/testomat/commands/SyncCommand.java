@@ -158,7 +158,7 @@ public class SyncCommand implements Runnable {
                 System.out.println("Skipping pull-ids: API key not provided");
             }
         } catch (Exception e) {
-            System.err.println("Export failed: " + e.getMessage());
+            System.err.println("Export failed: " + CliException.describe(e));
             if (verbose) {
                 e.printStackTrace();
             }

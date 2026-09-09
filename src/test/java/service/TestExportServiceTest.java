@@ -2,6 +2,7 @@ package service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -231,6 +232,34 @@ class TestExportServiceTest {
                 false
             )
         );
+    }
+
+    @Test
+    @DisplayName("Should preserve CliException message from http client")
+    void shouldPreserveCliExceptionMessage() {
+        List<TestCase> testCases =
+            List.of(createTestCase("test1"));
+        when(jsonBuilder.buildRequestBody(
+            any(),
+            eq("junit5"),
+            eq(false)
+        )).thenReturn("{json}");
+        org.mockito.Mockito.doThrow(
+                new CliException("401 Unauthorized: invalid API key")
+            ).when(httpClient)
+            .sendPostRequest(any(), any());
+        CliException exception = assertThrows(
+            CliException.class,
+            () -> service.handleProcessingResult(
+                testCases,
+                "junit5",
+                "key",
+                "http://localhost",
+                false,
+                false
+            )
+        );
+        assertTrue(exception.getMessage().contains("401"));
     }
 
     @Test

@@ -277,6 +277,22 @@ class TestMethodExtractorTest {
     }
 
     @Test
+    void shouldUseDirectoryAsSuiteForTopLevelTest() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @Test
+        fun topLevelTest() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "src/test/kotlin/junit5/basic/Simple.kt",
+            "junit"
+        );
+
+        assertEquals(List.of("junit5", "basic"), result.get(0).getSuites());
+    }
+
+    @Test
     void shouldExtractMultipleTests() throws Exception {
         ParsedKtFile parsedKtFile = createFile("""
         @Test

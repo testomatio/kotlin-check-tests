@@ -70,11 +70,33 @@ public class TestMethodExtractor {
         testCase.setTitle(title);
         testCase.setCode(getMethodCode(method, header));
         testCase.setSkipped(isTestSkipped(method, header));
-        testCase.setSuites(getSuites(method));
+        testCase.setSuites(getSuitesForMethod(method, filepath));
         testCase.setLabels(getLabels(method, framework));
         testCase.setFile(PathUtils.extractRelativeFilePath(filepath));
 
         return testCase;
+    }
+
+    private List<String> getSuitesForMethod(KtNamedFunction method, String filepath) {
+        List<String> suites = getSuites(method);
+
+        if (!suites.isEmpty()) {
+            return suites;
+        }
+
+        return getFileDirectorySuites(filepath);
+    }
+
+    private List<String> getFileDirectorySuites(String filepath) {
+        String relative = PathUtils.extractRelativeFilePath(filepath);
+        int lastSlash = relative.lastIndexOf('/');
+
+        if (lastSlash == -1) {
+            return new ArrayList<>();
+        }
+
+        String directory = relative.substring(0, lastSlash);
+        return new ArrayList<>(List.of(directory.split("/")));
     }
 
     private String getTestName(KtNamedFunction method, String header) {
