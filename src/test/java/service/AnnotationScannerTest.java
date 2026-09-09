@@ -172,6 +172,31 @@ class AnnotationScannerTest {
         assertEquals("@Test fun testMethod() {}", annotations.get(0));
     }
 
+    @Test
+    @DisplayName("Should find annotations above multiline annotation")
+    void shouldFindAnnotationsAboveMultilineAnnotation() throws Exception {
+
+        String code = """
+                @TestId("123")
+                @CsvFileSource(
+                    resources = ["a"],
+                    numLinesToSkip = 1
+                )
+                @Test
+                fun testMethod() {}
+                """;
+
+        KtNamedFunction function = parseFunction(code);
+
+        List<String> annotations =
+            AnnotationScanner.findAnnotationsAbove(function);
+
+        assertEquals(3, annotations.size());
+        assertTrue(annotations.stream().anyMatch(a -> a.startsWith("@TestId")));
+        assertTrue(annotations.stream().anyMatch(a -> a.startsWith("@CsvFileSource")));
+        assertTrue(annotations.stream().anyMatch(a -> a.equals("@Test")));
+    }
+
     private KtNamedFunction parseFunction(String code) throws Exception {
         Path path = tempDir.resolve("test.kt");
 

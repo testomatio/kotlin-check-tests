@@ -1,8 +1,8 @@
 package io.testomat.service;
 
 import java.util.Collection;
-import java.util.List;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
+import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtClass;
 import org.jetbrains.kotlin.psi.KtFile;
 import org.jetbrains.kotlin.psi.KtImportDirective;
@@ -80,10 +80,8 @@ public class TestFrameworkDetector {
     }
 
     private String checkClassAnnotations(KtClass clazz) {
-        List<String> annotations = AnnotationScanner.findAnnotationsAbove(clazz);
-
-        for (String line : annotations) {
-            String annName = TextUtils.extractAnnotationName(line);
+        for (KtAnnotationEntry entry : clazz.getAnnotationEntries()) {
+            String annName = getAnnotationName(entry);
 
             if ("SpringBootTest".equals(annName)
                     || "WebMvcTest".equals(annName)
@@ -101,28 +99,8 @@ public class TestFrameworkDetector {
     }
 
     private String checkMethodAnnotations(KtNamedFunction method) {
-
-        KtFile file = method.getContainingKtFile();
-        String text = file.getText();
-        List<String> lines = List.of(text.split("\n"));
-
-        int methodLine = TextUtils.getLine(method, file);
-
-        for (int i = methodLine - 1; i >= 0; i--) {
-            String line = lines.get(i).trim();
-
-            if (!line.startsWith("@")) {
-                if (!line.isEmpty()) {
-                    break;
-                }
-                continue;
-            }
-
-            String annName = TextUtils.extractAnnotationName(line);
-
-            if (annName == null) {
-                continue;
-            }
+        for (KtAnnotationEntry entry : method.getAnnotationEntries()) {
+            String annName = getAnnotationName(entry);
 
             if (annName.equals("ParameterizedTest")
                     || annName.equals("RepeatedTest")
@@ -148,11 +126,17 @@ public class TestFrameworkDetector {
             }
 
             if (annName.equals("Test")) {
-                return detectFromAnnotationContext(file);
+                return detectFromAnnotationContext(method.getContainingKtFile());
             }
         }
 
         return null;
+    }
+
+    private String getAnnotationName(KtAnnotationEntry entry) {
+        return entry.getShortName() != null
+                ? entry.getShortName().getIdentifier()
+                : "";
     }
 
     private String detectFromPatterns(KtFile ktFile) {

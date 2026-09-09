@@ -12,13 +12,14 @@ import java.util.Map;
 import org.jetbrains.kotlin.com.intellij.openapi.util.text.StringUtil;
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtFile;
+import org.jetbrains.kotlin.psi.KtFileAnnotationList;
 import org.jetbrains.kotlin.psi.KtImportDirective;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
+import org.jetbrains.kotlin.psi.KtPackageDirective;
 
 public class MinimalFileModificationService {
 
-    private static final String TEST_ID_IMPORT = "io.testomat.core.annotation.TestId";
-    private static final String TEST_ID_ANNOTATION = "TestId";
+    private static final String TEST_ID_IMPORT = TestIdUtils.TEST_ID_FQN;
 
     public static class FileModification {
         private final KtFile ktFile;
@@ -121,7 +122,7 @@ public class MinimalFileModificationService {
 
                 int methodLine = TextUtils.getLine(method, ktFile);
 
-                List<Integer> existingLines = findExistingTestIdLines(lines, methodLine);
+                List<Integer> existingLines = findExistingTestIdLines(method, ktFile);
 
                 for (Integer lineToDelete : existingLines) {
                     modifications.add(new TextModification(
@@ -188,11 +189,27 @@ public class MinimalFileModificationService {
     private int findImportInsertPosition(KtFile ktFile) {
         List<KtImportDirective> imports = ktFile.getImportDirectives();
 
-        if (imports.isEmpty()) {
-            return 0;
+        if (!imports.isEmpty()) {
+            return TextUtils.getLine(imports.get(imports.size() - 1), ktFile) + 1;
         }
 
-        return TextUtils.getLine(imports.get(imports.size() - 1), ktFile) + 1;
+        KtPackageDirective packageDirective = ktFile.getPackageDirective();
+
+        if (packageDirective != null
+                && packageDirective.getQualifiedName() != null
+                && !packageDirective.getQualifiedName().isEmpty()) {
+            return TextUtils.getLine(packageDirective, ktFile) + 1;
+        }
+
+        KtFileAnnotationList fileAnnotationList = ktFile.getFileAnnotationList();
+
+        if (fileAnnotationList != null) {
+            return TextUtils.getLineByOffset(
+                    ktFile.getText(),
+                    fileAnnotationList.getTextRange().getEndOffset()) + 1;
+        }
+
+        return 0;
     }
 
     private TextModification createAnnotationInsertion(List<String> lines,
@@ -207,24 +224,29 @@ public class MinimalFileModificationService {
         return new TextModification(line, annotationLine, ModificationType.INSERT);
     }
 
-    private List<Integer> findExistingTestIdLines(List<String> lines, int methodLine) {
+    private List<Integer> findExistingTestIdLines(KtNamedFunction method, KtFile file) {
         List<Integer> result = new ArrayList<>();
-        boolean inside = false;
-        for (int i = methodLine - 1; i >= 0; i--) {
-            String line = lines.get(i).trim();
-            if (line.contains("@TestId")) {
-                inside = true;
+
+        int methodLine = TextUtils.getLine(method, file);
+        String text = file.getText();
+
+        for (KtAnnotationEntry entry : method.getAnnotationEntries()) {
+            if (!TestIdUtils.isTestIdAnnotation(entry, file)) {
+                continue;
             }
-            if (inside) {
+
+            int startLine = TextUtils.getLineByOffset(text, entry.getTextRange().getStartOffset());
+            int endLine = TextUtils.getLineByOffset(text, entry.getTextRange().getEndOffset());
+
+            if (startLine >= methodLine) {
+                continue;
+            }
+
+            for (int i = startLine; i <= endLine; i++) {
                 result.add(i);
-                if (line.contains(")")) {
-                    break;
-                }
-            }
-            if (!line.isEmpty() && !line.startsWith("@") && !inside) {
-                break;
             }
         }
+
         return result;
     }
 

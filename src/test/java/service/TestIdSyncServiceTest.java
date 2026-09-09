@@ -164,7 +164,6 @@ class TestIdSyncServiceTest {
 
     @Test
     void shouldNotAddImportIfAlreadyExists() throws Exception {
-
         TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
         ResponseParser parser = mock(ResponseParser.class);
         TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
@@ -204,6 +203,93 @@ class TestIdSyncServiceTest {
         String updated = Files.readString(parsedKtFile.getPath());
 
         int count = updated.split("import io.testomat.core.annotation.TestId", -1).length - 1;
+        assertEquals(1, count);
+    }
+
+    @Test
+    void shouldInsertImportAfterPackageDirective() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(Map.of("test.kt#MyClass#testMethod", "123"));
+
+        ParsedKtFile parsedKtFile = createParsedFile("""
+            package com.example
+
+            class MyClass {
+                fun testMethod() {}
+            }
+        """);
+
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        String updated = Files.readString(parsedKtFile.getPath());
+
+        int packageIndex = updated.indexOf("package com.example");
+        int importIndex = updated.indexOf("import io.testomat.core.annotation.TestId");
+
+        assertTrue(packageIndex >= 0);
+        assertTrue(importIndex > packageIndex);
+    }
+
+    @Test
+    void shouldReplaceMultilineTestIdAnnotation() throws Exception {
+        TestomatHttpClient httpClient = mock(TestomatHttpClient.class);
+        ResponseParser parser = mock(ResponseParser.class);
+        TestIdAnnotationManager manager = mock(TestIdAnnotationManager.class);
+
+        TestIdSyncService service =
+            new TestIdSyncService(httpClient, parser, manager);
+
+        when(httpClient.sendGetRequest(any(), any()))
+            .thenReturn("response");
+
+        when(parser.parseTestsFromResponse("response"))
+            .thenReturn(Map.of("test.kt#MyClass#testMethod", "new-id"));
+
+        ParsedKtFile parsedKtFile = createParsedFile("""
+            class MyClass {
+                @TestId(
+                    "old-id"
+                )
+                fun testMethod() {}
+            }
+        """);
+
+        KtFile file = parsedKtFile.getKtFile();
+
+        KtNamedFunction method =
+            PsiTreeUtil.findChildrenOfType(file, KtNamedFunction.class)
+                .iterator().next();
+
+        when(manager.findMethodInParsedKtFiles(any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(method));
+
+        service.syncResult("key", "url", List.of(parsedKtFile), false, null);
+
+        String updated = Files.readString(parsedKtFile.getPath());
+
+        assertFalse(updated.contains("old-id"));
+        assertTrue(updated.contains("@TestId(\"new-id\")"));
+
+        int count = updated.split("@TestId", -1).length - 1;
         assertEquals(1, count);
     }
 }

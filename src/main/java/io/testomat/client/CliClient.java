@@ -37,35 +37,61 @@ public class CliClient implements TestomatHttpClient {
     @Override
     public String sendGetRequest(String apiKey, String serverUrl) {
         validateApiKey(apiKey);
+        validateServerUrl(serverUrl);
 
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(serverUrl + TEST_DATA_URL + apiKey))
-                    .timeout(GET_REQUEST_TIMEOUT)
-                    .header("Accept", ACCEPT_JSON)
-                    .GET()
-                    .build();
+        int attempt = 1;
+        Exception lastException = null;
 
-            HttpResponse<String> response = HTTP_CLIENT.send(request,
-                    HttpResponse.BodyHandlers.ofString());
+        while (attempt <= MAX_RETRIES) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(serverUrl + TEST_DATA_URL + apiKey))
+                        .timeout(GET_REQUEST_TIMEOUT)
+                        .header("Accept", ACCEPT_JSON)
+                        .header("User-Agent", USER_AGENT)
+                        .GET()
+                        .build();
 
-            validateGetResponse(response);
-            return response.body();
+                HttpResponse<String> response = HTTP_CLIENT.send(request,
+                        HttpResponse.BodyHandlers.ofString());
 
-        } catch (HttpTimeoutException e) {
-            throw new CliException("Request timeout after "
-                    + GET_REQUEST_TIMEOUT.getSeconds()
-                    + " seconds: "
-                    + e.getMessage(), e);
-        } catch (IOException e) {
-            throw new CliException("Network error occurred while sending request: "
-                    + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CliException("Request was interrupted: " + e.getMessage(), e);
-        } catch (Exception e) {
-            throw new CliException("Unexpected error occurred: " + e.getMessage(), e);
+                validateGetResponse(response);
+                return response.body();
+
+            } catch (HttpTimeoutException e) {
+                lastException = new CliException("Request timeout after "
+                        + GET_REQUEST_TIMEOUT.getSeconds()
+                        + " seconds: "
+                        + e.getMessage(), e);
+            } catch (ConnectException e) {
+                lastException = new CliException("Cannot connect to testomat.io server. "
+                        + "Please check your internet connection.", e);
+            } catch (SocketTimeoutException e) {
+                lastException = new CliException("Request timed out. The server might be busy.", e);
+            } catch (IOException e) {
+                lastException = new CliException("Network error occurred while sending request: "
+                        + e.getMessage(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new CliException("Request was interrupted: " + e.getMessage(), e);
+            }
+
+            if (attempt < MAX_RETRIES) {
+                System.err.println("Attempt " + attempt + " failed, retrying in "
+                        + (RETRY_DELAY_MS * attempt) + "ms...");
+                try {
+                    Thread.sleep((long) RETRY_DELAY_MS * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new CliException("Request was interrupted", ie);
+                }
+            }
+
+            attempt++;
         }
+
+        throw new CliException("Failed to fetch data after " + MAX_RETRIES + " attempts",
+                lastException);
     }
 
     @Override
@@ -123,6 +149,43 @@ public class CliClient implements TestomatHttpClient {
 
         throw new CliException("Failed to send data after " + MAX_RETRIES + " attempts",
                 lastException);
+    }
+
+    public static void validateServerUrl(String serverUrl) {
+        if (serverUrl == null || serverUrl.trim().isEmpty()) {
+            throw new CliException("Server URL is required");
+        }
+
+        String url = serverUrl.trim();
+
+        if (url.startsWith("https://")) {
+            return;
+        }
+
+        if (url.startsWith("http://") && isLocalHost(url)) {
+            return;
+        }
+
+        throw new CliException("Server URL must use HTTPS (got: " + url + ")");
+    }
+
+    private static boolean isLocalHost(String url) {
+        String host = url.substring("http://".length());
+
+        int slash = host.indexOf('/');
+        if (slash != -1) {
+            host = host.substring(0, slash);
+        }
+
+        int colon = host.indexOf(':');
+        if (colon != -1 && !host.startsWith("[")) {
+            host = host.substring(0, colon);
+        }
+
+        return host.equals("localhost")
+                || host.startsWith("127.0.0.1")
+                || host.equals("::1")
+                || host.startsWith("[::1]");
     }
 
     private void validateApiKey(String apiKey) {

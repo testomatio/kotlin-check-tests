@@ -74,15 +74,15 @@ public class KotlinFileParser {
             }
         );
 
-        JvmContentRootsKt.addJvmClasspathRoot(
-                configuration,
-            new File("libs/kotlin-stdlib.jar")
-        );
+        File stdlib = new File("libs/kotlin-stdlib.jar");
+        if (stdlib.exists()) {
+            JvmContentRootsKt.addJvmClasspathRoot(configuration, stdlib);
+        }
 
-        JvmContentRootsKt.addJvmClasspathRoot(
-                configuration,
-            new File("libs/junit-jupiter-api.jar")
-        );
+        File junitApi = new File("libs/junit-jupiter-api.jar");
+        if (junitApi.exists()) {
+            JvmContentRootsKt.addJvmClasspathRoot(configuration, junitApi);
+        }
 
         environment = KotlinCoreEnvironment.createForProduction(
             disposable,

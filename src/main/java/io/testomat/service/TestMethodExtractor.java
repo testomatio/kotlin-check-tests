@@ -3,12 +3,15 @@ package io.testomat.service;
 import io.testomat.model.AnnotationBlock;
 import io.testomat.model.TestCase;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.kotlin.com.intellij.openapi.util.TextRange;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
+import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtClass;
 import org.jetbrains.kotlin.psi.KtFile;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
@@ -86,9 +89,46 @@ public class TestMethodExtractor {
 
     private String getMethodCode(KtNamedFunction method, String header) {
         String cleanHeader = normalizeHeader(header);
-        String cleanMethod = formatMethod(method.getText());
+        String cleanMethod = formatMethod(stripAnnotations(method));
 
         return cleanHeader + cleanMethod;
+    }
+
+    private String stripAnnotations(KtNamedFunction method) {
+        String text = method.getText();
+        int baseOffset = method.getTextRange().getStartOffset();
+
+        List<TextRange> ranges = new ArrayList<>();
+
+        for (KtAnnotationEntry entry : method.getAnnotationEntries()) {
+            TextRange range = entry.getTextRange().shiftLeft(baseOffset);
+
+            int start = range.getStartOffset();
+            while (start > 0 && (text.charAt(start - 1) == ' '
+                    || text.charAt(start - 1) == '\t')) {
+                start--;
+            }
+
+            int end = range.getEndOffset();
+            if (end < text.length() && text.charAt(end) == '\r') {
+                end++;
+            }
+            if (end < text.length() && text.charAt(end) == '\n') {
+                end++;
+            }
+
+            ranges.add(new TextRange(start, end));
+        }
+
+        ranges.sort(Comparator.comparingInt(TextRange::getStartOffset).reversed());
+
+        StringBuilder result = new StringBuilder(text);
+
+        for (TextRange range : ranges) {
+            result.delete(range.getStartOffset(), range.getEndOffset());
+        }
+
+        return result.toString();
     }
 
     private String formatMethod(String text) {
@@ -130,14 +170,10 @@ public class TestMethodExtractor {
 
             result.append("\n");
 
-            if (trimmed.equals("}")) {
-
-                if (i == lines.length - 1) {
-                    result.append("");
-                } else {
-                    result.append(" ".repeat(4));
-                }
-
+            if (isClosingDelimiter(trimmed) && i == lines.length - 1) {
+                result.append("");
+            } else if (trimmed.equals("}")) {
+                result.append(" ".repeat(4));
             } else {
                 result.append(" ".repeat(4 + relativeIndent));
             }
@@ -146,6 +182,10 @@ public class TestMethodExtractor {
         }
 
         return result.toString();
+    }
+
+    private boolean isClosingDelimiter(String trimmed) {
+        return trimmed.equals("}") || trimmed.equals(")") || trimmed.equals("]");
     }
 
     private String normalizeHeader(String text) {

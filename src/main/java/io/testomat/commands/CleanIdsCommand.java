@@ -1,6 +1,5 @@
 package io.testomat.commands;
 
-import io.testomat.exception.CliException;
 import io.testomat.model.CleanupResult;
 import io.testomat.model.FilesProcessingResult;
 import io.testomat.model.ParsedKtFile;
@@ -11,6 +10,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.concurrent.Callable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
@@ -20,15 +20,18 @@ import picocli.CommandLine.Option;
         name = "clean-ids",
         description = "Remove @TestId annotations and imports from test files"
 )
-public class CleanIdsCommand implements Runnable {
+public class CleanIdsCommand implements Callable<Integer> {
     private static final Logger log = LoggerFactory.getLogger(CleanIdsCommand.class);
+
+    private static final int SUCCESS_EXIT_CODE = 0;
+    private static final int ERROR_EXIT_CODE = 1;
 
     private final TestFileScanner scanner;
     private final AnnotationCleaner cleaner;
 
     @Option(
             names = {"-d", "--directory"},
-            description = "Directory to scan for test files (default: ktFilerrent directory)",
+            description = "Directory to scan for test files (default: current directory)",
             defaultValue = ".")
     private String directory;
 
@@ -54,7 +57,7 @@ public class CleanIdsCommand implements Runnable {
     }
 
     @Override
-    public void run() {
+    public Integer call() {
         try {
             log.info("Starting @TestId cleanup from directory: {}",
                     Paths.get(directory).toAbsolutePath());
@@ -64,14 +67,20 @@ public class CleanIdsCommand implements Runnable {
 
             if (kotlinFiles.isEmpty()) {
                 log.info("No Kotlin files found!");
-                return;
+                return SUCCESS_EXIT_CODE;
             }
 
             FilesProcessingResult result = processFiles(kotlinFiles, cleaner);
             printSummary(result);
 
+            return SUCCESS_EXIT_CODE;
+
         } catch (Exception e) {
-            handleProcessingException(e);
+            System.err.println("Cleanup failed: " + e.getMessage());
+            if (verbose) {
+                e.printStackTrace();
+            }
+            return ERROR_EXIT_CODE;
         }
     }
 
@@ -111,9 +120,6 @@ public class CleanIdsCommand implements Runnable {
                 log.info("  Removed {} TestId imports", result.getRemovedImports());
             }
 
-            // Note: File is now saved by AnnotationCleaner using MinimalFileModificationService
-            // to preserve original code style
-
             totalResult.addResults(result.getRemovedAnnotations(), result.getRemovedImports());
         } else {
             log.info("  No @TestId annotations or imports found");
@@ -137,15 +143,7 @@ public class CleanIdsCommand implements Runnable {
     private void handleFileError(File kotlinFile, Exception e) {
         System.err.println("Error processing " + kotlinFile.getName() + ": " + e.getMessage());
         if (verbose) {
-            throw new CliException("Failed to process file: " + kotlinFile, e);
+            e.printStackTrace();
         }
-    }
-
-    private void handleProcessingException(Exception e) {
-        System.err.println("Cleanup failed" + ": " + e.getMessage());
-        if (verbose) {
-            throw new CliException("Failed to process file: " + "Cleanup failed", e);
-        }
-        throw new CliException("Cleanup failed", e);
     }
 }

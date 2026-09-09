@@ -195,4 +195,62 @@ class AnnotationUtilsTest {
         assertEquals(1, blocks.size());
         assertTrue(blocks.get(0).isTest());
     }
+
+    @Test
+    @DisplayName("Should not include class declaration in annotation block")
+    void shouldNotIncludeClassDeclarationInBlock() {
+        String[] lines = {
+            "@Tag(\"api\")",
+            "class Tagged {",
+            "    @Test",
+            "    fun test() {}"
+        };
+        List<AnnotationBlock> blocks =
+            AnnotationUtils.collectAnnotationBlocks(lines);
+        assertEquals(2, blocks.size());
+        assertFalse(blocks.get(0).getText().contains("class Tagged"));
+        assertFalse(blocks.get(1).getText().contains("class Tagged"));
+    }
+
+    @Test
+    @DisplayName("Should not include previous function body in annotation block")
+    void shouldNotIncludePreviousFunctionBody() {
+        String[] lines = {
+            "@Test",
+            "fun first() {",
+            "    @Suppress(\"x\")",
+            "    val a = 1",
+            "    assertEquals(1, a)",
+            "}",
+            "",
+            "@Test",
+            "fun second() {}"
+        };
+        List<AnnotationBlock> blocks =
+            AnnotationUtils.collectAnnotationBlocks(lines);
+        assertEquals(3, blocks.size());
+        assertEquals(0, blocks.get(0).getStartLine());
+        assertEquals(2, blocks.get(1).getStartLine());
+        assertEquals(7, blocks.get(2).getStartLine());
+        assertFalse(blocks.get(2).getText().contains("val a"));
+        assertFalse(blocks.get(2).getText().contains("assertEquals"));
+    }
+
+    @Test
+    @DisplayName("Should keep text block annotation as single block")
+    void shouldKeepTextBlockAnnotation() {
+        String[] lines = {
+            "@ParameterizedTest",
+            "@CsvSource(textBlock = \"\"\"",
+            "    2, 2, 4",
+            "    3, 3, 6",
+            "\"\"\")",
+            "fun test() {}"
+        };
+        List<AnnotationBlock> blocks =
+            AnnotationUtils.collectAnnotationBlocks(lines);
+        assertEquals(1, blocks.size());
+        assertTrue(blocks.get(0).getText().contains("@CsvSource"));
+        assertTrue(blocks.get(0).getText().contains("2, 2, 4"));
+    }
 }

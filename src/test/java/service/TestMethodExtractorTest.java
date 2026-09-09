@@ -280,4 +280,109 @@ class TestMethodExtractorTest {
 
         assertTrue(result.isEmpty());
     }
+
+    @Test
+    void shouldNotDuplicateAnnotationsInCode() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @Test
+        @TestId("123")
+        @DisplayName("x")
+        fun testMethod() {}
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        String code = result.get(0).getCode();
+
+        assertEquals(1, countOccurrences(code, "@Test\n"));
+        assertEquals(1, countOccurrences(code, "@TestId"));
+        assertEquals(1, countOccurrences(code, "@DisplayName"));
+    }
+
+    @Test
+    void shouldNotDuplicateAnnotationsInClassMethod() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        class MyTest {
+            @Test
+            fun testMethod() {}
+        }
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        String code = result.get(0).getCode();
+
+        assertEquals(1, countOccurrences(code, "@Test\n"));
+        assertEquals(1, countOccurrences(code, "fun testMethod"));
+    }
+
+    @Test
+    void shouldNotIncludeClassContextInCode() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @Tag("api")
+        class Tagged {
+            @Test
+            @Tag("smoke")
+            fun taggedSmokeTest() {
+                assertTrue(true)
+            }
+        }
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        String code = result.get(0).getCode();
+
+        assertFalse(code.contains("class Tagged"));
+        assertFalse(code.contains("@Tag(\"api\")"));
+        assertEquals(1, countOccurrences(code, "@Test"));
+        assertEquals(1, countOccurrences(code, "@Tag(\"smoke\")"));
+    }
+
+    @Test
+    void shouldIncludeAnnotationsForTextBlockParameterizedTest() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        @ParameterizedTest
+        @CsvSource(textBlock = \"""
+            2, 2, 4
+        \""")
+        fun csvTextBlockTest(a: Int, b: Int, expected: Int) {
+            assertEquals(expected, a + b)
+        }
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        String code = result.get(0).getCode();
+
+        assertTrue(code.contains("@ParameterizedTest"));
+        assertTrue(code.contains("@CsvSource"));
+        assertTrue(code.contains("fun csvTextBlockTest"));
+    }
+
+    private int countOccurrences(String text, String token) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(token, index)) != -1) {
+            count++;
+            index += token.length();
+        }
+        return count;
+    }
 }

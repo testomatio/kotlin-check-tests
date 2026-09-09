@@ -8,16 +8,19 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
+import org.jetbrains.kotlin.name.FqName;
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtClass;
 import org.jetbrains.kotlin.psi.KtFile;
+import org.jetbrains.kotlin.psi.KtImportDirective;
+import org.jetbrains.kotlin.psi.KtImportList;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
 import org.jetbrains.kotlin.psi.KtPsiFactory;
+import org.jetbrains.kotlin.resolve.ImportPath;
 
 public class TestIdAnnotationManager {
 
-    private static final String TEST_ID_IMPORT = "io.testomat.core.annotation.TestId";
-    private static final String TEST_ID_ANNOTATION = "TestId";
+    private static final String TEST_ID_IMPORT = TestIdUtils.TEST_ID_FQN;
     private static final String TEST_ID_PREFIX = "@T";
 
     public Optional<KtNamedFunction> findMethodInParsedKtFiles(
@@ -72,7 +75,7 @@ public class TestIdAnnotationManager {
 
         Optional<KtAnnotationEntry> existingAnnotation =
                 method.getAnnotationEntries().stream()
-                .filter(a -> TEST_ID_ANNOTATION.equals(getAnnotationName(a)))
+                .filter(a -> TestIdUtils.isTestIdAnnotation(a, method.getContainingKtFile()))
                 .findFirst();
 
         if (existingAnnotation.isPresent()) {
@@ -87,6 +90,20 @@ public class TestIdAnnotationManager {
                 .anyMatch(imp ->
                 imp.getImportedFqName() != null
                     && TEST_ID_IMPORT.equals(imp.getImportedFqName().asString()));
+
+        if (!hasImport) {
+            KtImportList importList = ktFile.getImportList();
+
+            if (importList == null) {
+                return;
+            }
+
+            KtPsiFactory factory = new KtPsiFactory(ktFile.getProject());
+            KtImportDirective importDirective =
+                    factory.createImportDirective(new ImportPath(
+                            new FqName(TEST_ID_IMPORT), false));
+            importList.add(importDirective);
+        }
     }
 
     private boolean isMatchingFile(KtFile ktFile, String expectedFileName,
@@ -230,12 +247,6 @@ public class TestIdAnnotationManager {
                 factory.createAnnotationEntry("@TestId(\"" + cleanTestId + "\")");
 
         method.addAnnotationEntry(annotation);
-    }
-
-    private String getAnnotationName(KtAnnotationEntry annotation) {
-        return annotation.getShortName() != null
-            ? annotation.getShortName().getIdentifier()
-            : "";
     }
 
     public static class TestMethodInfo {

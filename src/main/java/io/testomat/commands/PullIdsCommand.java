@@ -5,20 +5,21 @@ import io.testomat.model.ParsedKtFile;
 import io.testomat.progressbar.ProgressBar;
 import io.testomat.service.KotlinFileParser;
 import io.testomat.service.ResponseParser;
+import io.testomat.service.TestFileScanner;
 import io.testomat.service.TestIdAnnotationManager;
 import io.testomat.service.TestIdSyncService;
-import java.nio.file.Files;
+import java.io.File;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import picocli.CommandLine;
 
 @CommandLine.Command(name = "pull-ids", description =
         "Pulls IDs into your codebase from testomat.io")
 public class PullIdsCommand implements Runnable {
     private static final String DEFAULT_URL = "https://app.testomat.io";
+
+    private final TestFileScanner scanner = new TestFileScanner();
 
     @CommandLine.Option(
             names = {"--directory", "-d"},
@@ -51,7 +52,11 @@ public class PullIdsCommand implements Runnable {
 
     @Override
     public void run() {
-        // Set default URL if not provided and environment variable is not set
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            System.err.println("API key is required. Provide --apikey or set TESTOMATIO.");
+            return;
+        }
+
         if (serverUrl == null || serverUrl.trim().isEmpty()) {
             String envUrl = System.getenv("TESTOMATIO_URL");
             if (envUrl == null || envUrl.trim().isEmpty()) {
@@ -69,7 +74,7 @@ public class PullIdsCommand implements Runnable {
         }
 
         ProgressBar progressBar = new ProgressBar(100, "Processing test IDs");
-        TestIdSyncService.SyncResult result = 
+        TestIdSyncService.SyncResult result =
                 syncService.syncResult(apiKey, serverUrl, parsedKtFile, verbose, progressBar);
 
         System.out.println("Processed " + result.getProcessedCount() + " test methods");
@@ -90,13 +95,9 @@ public class PullIdsCommand implements Runnable {
     }
 
     private List<Path> findKotlinFiles() {
-        try (Stream<Path> pathStream = Files.walk(Paths.get(directory))) {
-            return pathStream
-                    .filter(path -> path.toString().endsWith(".kt"))
-                    .collect(Collectors.toList());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to scan directory for Kotlin files", e);
-        }
+        return scanner.findTestFiles(new File(directory)).stream()
+                .map(File::toPath)
+                .collect(Collectors.toList());
     }
 
     private List<ParsedKtFile> parseKotlinFiles(List<Path> kotlinFiles) {

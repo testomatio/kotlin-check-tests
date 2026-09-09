@@ -55,23 +55,6 @@ public class TestExportService {
             apiKey, serverUrl, dryRun, structure);
     }
 
-    private List<TestCase> collectTestCasesFromFile(File file) {
-        KtFile ktFile = KotlinFileParser.parseFile(Path.of(file.getAbsolutePath())).getKtFile();
-        if (ktFile == null) {
-            return new ArrayList<>();
-        }
-
-        String framework = detector.detectFramework(ktFile);
-        if (framework == null) {
-            return new ArrayList<>();
-        }
-
-        List<TestCase> testCases = extractor.extractTestCases(
-                ktFile, file.getAbsolutePath(), framework);
-
-        return testCases.isEmpty() ? new ArrayList<>() : testCases;
-    }
-
     private int exportAllTestCases(List<TestCase> allTestCases, String framework,
             String apiKey, String serverUrl, boolean structure) {
         validateExportConfig(serverUrl);
@@ -120,6 +103,8 @@ public class TestExportService {
         if (serverUrl == null || serverUrl.trim().isEmpty()) {
             throw new IllegalArgumentException("TESTOMATIO_URL is required for actual execution");
         }
+
+        CliClient.validateServerUrl(serverUrl);
     }
 
     public ProcessingResult processAllFiles(List<File> testFiles, boolean verbose,
@@ -130,11 +115,26 @@ public class TestExportService {
 
         for (File testFile : testFiles) {
             try {
-                List<TestCase> testCases = collectTestCasesFromFile(testFile);
+                KtFile ktFile = KotlinFileParser.parseFile(
+                        Path.of(testFile.getAbsolutePath())).getKtFile();
+
+                if (ktFile == null) {
+                    continue;
+                }
+
+                String framework = detector.detectFramework(ktFile);
+
+                if (framework == null) {
+                    continue;
+                }
+
+                List<TestCase> testCases =
+                        extractor.extractTestCases(ktFile, testFile.getAbsolutePath(), framework);
+
                 if (!testCases.isEmpty()) {
                     allTestCases.addAll(testCases);
                     if (primaryFramework == null) {
-                        primaryFramework = detectFrameworkFromFile(testFile);
+                        primaryFramework = framework;
                     }
                 }
             } catch (Exception e) {
@@ -172,13 +172,5 @@ public class TestExportService {
         } else {
             return exportAllTestCases(allTestCases, primaryFramework, apiKey, serverUrl, structure);
         }
-    }
-
-    private String detectFrameworkFromFile(File file) {
-        KtFile ktFile = KotlinFileParser.parseFile(Path.of(file.getAbsolutePath())).getKtFile();
-        if (ktFile == null) {
-            return null;
-        }
-        return detector.detectFramework(ktFile);
     }
 }
