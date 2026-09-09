@@ -205,8 +205,12 @@ public class TestMethodExtractor {
     }
 
     private boolean isTestSkipped(KtNamedFunction method, @NotNull String header) {
-        if (header.contains("@Disabled") || header.contains("@Ignore")) {
-            return true;
+        for (String line : header.split("\n")) {
+            String annName = TextUtils.extractAnnotationName(line);
+
+            if ("Disabled".equals(annName) || "Ignore".equals(annName)) {
+                return true;
+            }
         }
 
         String name = method.getName() != null ? method.getName().toLowerCase() : "";

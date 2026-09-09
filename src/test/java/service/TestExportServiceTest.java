@@ -304,6 +304,38 @@ class TestExportServiceTest {
         }
     }
 
+    @Test
+    @DisplayName("Should exclude skipped tests from processing result")
+    void shouldExcludeSkippedFromProcessingResult() {
+        File file = new File("test.kt");
+        try (MockedStatic<KotlinFileParser> mockedParser =
+            org.mockito.Mockito.mockStatic(KotlinFileParser.class)) {
+            mockedParser.when(() ->
+                    KotlinFileParser.parseFile(any(Path.class)))
+                .thenReturn(parsedKtFile);
+            when(parsedKtFile.getKtFile())
+                .thenReturn(ktFile);
+            when(detector.detectFramework(ktFile))
+                .thenReturn("junit5");
+            TestCase skipped = createTestCase("skipped");
+            skipped.setSkipped(true);
+            TestCase active = createTestCase("active");
+            when(extractor.extractTestCases(
+                any(),
+                any(),
+                any()
+            )).thenReturn(List.of(skipped, active));
+            ProcessingResult result =
+                service.processAllFiles(
+                    List.of(file),
+                    false,
+                    null
+                );
+            assertEquals(1, result.allTestCases().size());
+            assertEquals("active", result.allTestCases().get(0).getName());
+        }
+    }
+
     private TestCase createTestCase(String name) {
         TestCase testCase = new TestCase();
         testCase.setName(name);

@@ -132,7 +132,9 @@ public class TestExportService {
                         extractor.extractTestCases(ktFile, testFile.getAbsolutePath(), framework);
 
                 if (!testCases.isEmpty()) {
-                    allTestCases.addAll(testCases);
+                    allTestCases.addAll(testCases.stream()
+                            .filter(testCase -> !testCase.isSkipped())
+                            .toList());
                     if (primaryFramework == null) {
                         primaryFramework = framework;
                     }

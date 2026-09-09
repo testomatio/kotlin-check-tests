@@ -91,6 +91,36 @@ class TestMethodExtractorTest {
     }
 
     @Test
+    void shouldNotTreatDisabledOnOsAsSkipped() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+            @DisabledOnOs(OS.LINUX)
+            @Test
+            fun conditionalTest() {}
+        """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(), "test.kt", "junit"
+        );
+
+        assertFalse(result.get(0).isSkipped());
+    }
+
+    @Test
+    void shouldNotTreatDisabledOnJreAsSkipped() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+            @DisabledOnJre(JRE.JAVA_8)
+            @Test
+            fun conditionalJreTest() {}
+        """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(), "test.kt", "junit"
+        );
+
+        assertFalse(result.get(0).isSkipped());
+    }
+
+    @Test
     void shouldExtractLabelsFromAnnotations() throws Exception {
         ParsedKtFile parsedKtFile = createFile("""
             @Tag("smoke")
