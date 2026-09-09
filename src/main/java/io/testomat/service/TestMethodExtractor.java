@@ -1,6 +1,5 @@
 package io.testomat.service;
 
-import io.testomat.model.AnnotationBlock;
 import io.testomat.model.TestCase;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -8,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.kotlin.com.intellij.openapi.util.TextRange;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
@@ -23,19 +23,18 @@ public class TestMethodExtractor {
             Pattern.compile("@(?:[\\w.]+\\.)?(Test|ParameterizedTest|RepeatedTest|TestFactory)\\b");
     private static final Pattern TAG_PATTERN =
             Pattern.compile("@Tag\\(\"([^\"]+)\"\\)");
+    private static final Pattern TITLE_PATTERN =
+            Pattern.compile("@Title\\s*\\(\\s*\"([^\"]+)\"");
 
     public List<TestCase> extractTestCases(KtFile file, String filepath, String framework) {
         List<TestCase> result = new ArrayList<>();
-
-        String[] lines = file.getText().split("\n");
-        List<AnnotationBlock> blocks = AnnotationUtils.collectAnnotationBlocks(lines);
 
         file.accept(new KtTreeVisitorVoid() {
             @Override
             public void visitNamedFunction(@NotNull KtNamedFunction function) {
                 super.visitNamedFunction(function);
 
-                String header = AnnotationUtils.findHeaderForMethod(function, blocks, lines);
+                String header = buildHeader(function);
 
                 if (!isTestMethod(function, header)) {
                     return;
@@ -77,6 +76,12 @@ public class TestMethodExtractor {
         return testCase;
     }
 
+    private String buildHeader(KtNamedFunction method) {
+        return method.getAnnotationEntries().stream()
+                .map(entry -> entry.getText().trim())
+                .collect(Collectors.joining("\n"));
+    }
+
     private List<String> getSuitesForMethod(KtNamedFunction method, String filepath) {
         List<String> suites = getSuites(method);
 
@@ -100,7 +105,7 @@ public class TestMethodExtractor {
     }
 
     private String getTestName(KtNamedFunction method, String header) {
-        String title = AnnotationUtils.extractTitle(header);
+        String title = extractTitle(header);
 
         if (title != null && !title.isBlank()) {
             return title;
@@ -109,11 +114,63 @@ public class TestMethodExtractor {
         return method.getName();
     }
 
-    private String getMethodCode(KtNamedFunction method, String header) {
-        String cleanHeader = normalizeHeader(header);
-        String cleanMethod = formatMethod(stripAnnotations(method));
+    private String extractTitle(String header) {
+        Matcher matcher = TITLE_PATTERN.matcher(header);
 
-        return cleanHeader + cleanMethod;
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private String getMethodCode(KtNamedFunction method, String header) {
+        String methodText = deindentToMethodLevel(stripAnnotations(method), method);
+
+        if (header.isBlank()) {
+            return methodText;
+        }
+
+        return header + "\n" + methodText;
+    }
+
+    private String deindentToMethodLevel(String text, KtNamedFunction method) {
+        KtFile file = method.getContainingKtFile();
+        String[] fileLines = file.getText().split("\n");
+        int methodLine = TextUtils.getLine(method, file);
+
+        if (methodLine >= fileLines.length) {
+            return text;
+        }
+
+        String methodLineText = fileLines[methodLine];
+        int indent = 0;
+        while (indent < methodLineText.length()
+                && (methodLineText.charAt(indent) == ' '
+                || methodLineText.charAt(indent) == '\t')) {
+            indent++;
+        }
+
+        if (indent == 0) {
+            return text;
+        }
+
+        String[] textLines = text.split("\n", -1);
+        StringBuilder result = new StringBuilder();
+
+        for (int i = 0; i < textLines.length; i++) {
+            String line = textLines[i];
+
+            int remove = 0;
+            while (remove < indent && remove < line.length()
+                    && (line.charAt(remove) == ' ' || line.charAt(remove) == '\t')) {
+                remove++;
+            }
+
+            if (i > 0) {
+                result.append("\n");
+            }
+
+            result.append(line.substring(remove));
+        }
+
+        return result.toString();
     }
 
     private String stripAnnotations(KtNamedFunction method) {
@@ -125,12 +182,6 @@ public class TestMethodExtractor {
         for (KtAnnotationEntry entry : method.getAnnotationEntries()) {
             TextRange range = entry.getTextRange().shiftLeft(baseOffset);
 
-            int start = range.getStartOffset();
-            while (start > 0 && (text.charAt(start - 1) == ' '
-                    || text.charAt(start - 1) == '\t')) {
-                start--;
-            }
-
             int end = range.getEndOffset();
             if (end < text.length() && text.charAt(end) == '\r') {
                 end++;
@@ -138,8 +189,12 @@ public class TestMethodExtractor {
             if (end < text.length() && text.charAt(end) == '\n') {
                 end++;
             }
+            while (end < text.length() && (text.charAt(end) == ' '
+                    || text.charAt(end) == '\t')) {
+                end++;
+            }
 
-            ranges.add(new TextRange(start, end));
+            ranges.add(new TextRange(range.getStartOffset(), end));
         }
 
         ranges.sort(Comparator.comparingInt(TextRange::getStartOffset).reversed());
@@ -150,80 +205,11 @@ public class TestMethodExtractor {
             result.delete(range.getStartOffset(), range.getEndOffset());
         }
 
-        return result.toString();
-    }
-
-    private String formatMethod(String text) {
-        String[] lines = text.split("\n");
-
-        if (lines.length == 0) {
-            return text;
-        }
-
-        StringBuilder result = new StringBuilder();
-
-        result.append(lines[0].trim());
-
-        int baseIndent = -1;
-
-        for (int i = 1; i < lines.length; i++) {
-            String line = lines[i];
-
-            if (line.trim().isEmpty()) {
-                result.append("\n");
-                continue;
-            }
-
-            int j = 0;
-            while (j < line.length() && Character.isWhitespace(line.charAt(j))) {
-                j++;
-            }
-
-            if (baseIndent == -1) {
-                baseIndent = j;
-            }
-
-            int relativeIndent = j - baseIndent;
-            if (relativeIndent < 0) {
-                relativeIndent = 0;
-            }
-
-            String trimmed = line.trim();
-
-            result.append("\n");
-
-            if (isClosingDelimiter(trimmed) && i == lines.length - 1) {
-                result.append("");
-            } else if (trimmed.equals("}")) {
-                result.append(" ".repeat(4));
-            } else {
-                result.append(" ".repeat(4 + relativeIndent));
-            }
-
-            result.append(trimmed);
+        while (result.length() > 0 && Character.isWhitespace(result.charAt(0))) {
+            result.deleteCharAt(0);
         }
 
         return result.toString();
-    }
-
-    private boolean isClosingDelimiter(String trimmed) {
-        return trimmed.equals("}") || trimmed.equals(")") || trimmed.equals("]");
-    }
-
-    private String normalizeHeader(String text) {
-        String[] lines = text.split("\n");
-
-        StringBuilder result = new StringBuilder();
-
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i].trim();
-            if (i > 0) {
-                result.append("\n");
-            }
-            result.append(line);
-        }
-
-        return !result.isEmpty() ? result.append("\n").toString() : "";
     }
 
     private boolean isTestSkipped(KtNamedFunction method, @NotNull String header) {
@@ -273,7 +259,9 @@ public class TestMethodExtractor {
     private List<String> getLabels(KtNamedFunction method, String framework) {
         List<String> labels = new ArrayList<>();
 
-        List<String> annotations = AnnotationScanner.findAnnotationsAbove(method);
+        List<String> annotations = method.getAnnotationEntries().stream()
+                .map(entry -> entry.getText().trim())
+                .collect(Collectors.toList());
 
         for (String line : annotations) {
             String annName = TextUtils.extractAnnotationName(line);

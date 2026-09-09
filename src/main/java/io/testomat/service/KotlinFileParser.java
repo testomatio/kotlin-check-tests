@@ -99,14 +99,14 @@ public class KotlinFileParser {
     public static ParsedKtFile parseFile(Path path) {
         init();
 
-        String content = Files.readString(path)
-                .replace("\r\n", "\n")
-                .replace('\r', '\n');
+        String raw = Files.readString(path);
+        String lineEnding = raw.contains("\r\n") ? "\r\n" : "\n";
+        String content = raw.replace("\r\n", "\n").replace('\r', '\n');
         String fileName = path.getFileName().toString();
 
         KtFile ktFile = psiFactory.createFile(fileName, content);
 
-        return new ParsedKtFile(ktFile, path);
+        return new ParsedKtFile(ktFile, path, lineEnding);
     }
 
     public static void shutdown() {

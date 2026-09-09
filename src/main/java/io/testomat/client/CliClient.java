@@ -24,6 +24,9 @@ public class CliClient implements TestomatHttpClient {
 
     private static final int MAX_RETRIES = 3;
     private static final int RETRY_DELAY_MS = 1000;
+    private static final int IMPORT_LOCK_RETRY_DELAY_MS = 2000;
+    private static final String IMPORT_LOCKED_MESSAGE = "Import Locked: another import is running "
+            + "on the server. Wait until it finishes and retry.";
     private static final int SUCCESS_STATUS_MIN = 200;
     private static final int SUCCESS_STATUS_MAX = 299;
     private static final int CLIENT_ERROR_MIN = 400;
@@ -99,6 +102,8 @@ public class CliClient implements TestomatHttpClient {
         Exception lastException = null;
 
         while (attempt <= MAX_RETRIES) {
+            boolean importLocked = false;
+
             try {
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
@@ -116,12 +121,15 @@ public class CliClient implements TestomatHttpClient {
                 }
 
                 String errorMessage = formatPostHttpError(response);
+                importLocked = isImportLocked(response);
 
-                if (isClientError(response)) {
+                if (isClientError(response) && !importLocked) {
                     throw new CliException(errorMessage);
                 }
 
-                lastException = new CliException(errorMessage);
+                lastException = importLocked
+                        ? new CliException(IMPORT_LOCKED_MESSAGE)
+                        : new CliException(errorMessage);
 
             } catch (ConnectException e) {
                 lastException = new CliException("Cannot connect to " + hostOf(url)
@@ -134,8 +142,11 @@ public class CliClient implements TestomatHttpClient {
             }
 
             if (attempt < MAX_RETRIES) {
+                long delay = importLocked
+                        ? (long) IMPORT_LOCK_RETRY_DELAY_MS * attempt
+                        : (long) RETRY_DELAY_MS * attempt;
                 try {
-                    Thread.sleep((long) RETRY_DELAY_MS * attempt);
+                    Thread.sleep(delay);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     throw new CliException("Export interrupted", ie);
@@ -147,6 +158,16 @@ public class CliClient implements TestomatHttpClient {
 
         throw new CliException("Failed to send data after " + MAX_RETRIES + " attempts",
                 lastException);
+    }
+
+    private boolean isImportLocked(HttpResponse<String> response) {
+        if (response.statusCode() != 422) {
+            return false;
+        }
+
+        String body = response.body();
+
+        return body != null && body.toLowerCase().contains("import locked");
     }
 
     public static void validateServerUrl(String serverUrl) {

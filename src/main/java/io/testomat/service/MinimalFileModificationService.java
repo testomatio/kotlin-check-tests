@@ -28,6 +28,7 @@ public class MinimalFileModificationService {
         private final List<KtImportDirective> importsToRemove = new ArrayList<>();
         private boolean needsImport = false;
         private Path filePath;
+        private String lineEnding = "\n";
 
         public FileModification(KtFile ktFile) {
             this.ktFile = ktFile;
@@ -81,6 +82,16 @@ public class MinimalFileModificationService {
 
         public void setFilePath(Path filePath) {
             this.filePath = filePath;
+        }
+
+        public String getLineEnding() {
+            return lineEnding;
+        }
+
+        public void setLineEnding(String lineEnding) {
+            if (lineEnding != null && !lineEnding.isEmpty()) {
+                this.lineEnding = lineEnding;
+            }
         }
     }
 
@@ -138,7 +149,9 @@ public class MinimalFileModificationService {
             modifications.sort((a, b) -> Integer.compare(b.lineNumber, a.lineNumber));
             applyModifications(lines, modifications);
 
-            Files.write(modification.getFilePath(), lines, StandardCharsets.UTF_8);
+            String separator = modification.getLineEnding();
+            Files.writeString(modification.getFilePath(),
+                    String.join(separator, lines), StandardCharsets.UTF_8);
 
         } catch (IOException e) {
             throw new CliException("Failed to modify file: " + filePath, e);

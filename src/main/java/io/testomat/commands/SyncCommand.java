@@ -1,23 +1,15 @@
 package io.testomat.commands;
 
-import io.testomat.client.CliClient;
 import io.testomat.exception.CliException;
 import io.testomat.model.ProcessingResult;
-import io.testomat.model.TestCase;
 import io.testomat.progressbar.ProgressBar;
 import io.testomat.service.DirectoryValidator;
-import io.testomat.service.ResponseParser;
 import io.testomat.service.TestExportService;
 import io.testomat.service.TestFileScanner;
-import io.testomat.service.TestIdAnnotationManager;
-import io.testomat.service.TestIdSyncService;
 import io.testomat.service.VerboseLogger;
 import java.io.File;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
@@ -27,7 +19,7 @@ import picocli.CommandLine.Option;
         description = "Run export then importId",
         mixinStandardHelpOptions = true)
 public class SyncCommand implements Runnable {
-    private static final String VERSION = "v.0.1.1";
+    private static final String VERSION = "v.0.2.0";
 
     private static final String CURRENT_DIRECTORY = ".";
     private static final String DEFAULT_URL = "https://app.testomat.io";
@@ -120,33 +112,14 @@ public class SyncCommand implements Runnable {
                 return;
             }
 
-            TestIdSyncService syncService = new TestIdSyncService(
-                    new CliClient(),
-                    new ResponseParser(),
-                    new TestIdAnnotationManager()
-            );
-
             ProgressBar progressBar = new ProgressBar(testFiles.size(),
                     "Parsing " + testFiles.size() + " files");
 
             ProcessingResult processingResult =
                     exportService.processAllFiles(testFiles, verbose, progressBar);
 
-            Map<String, String> syncResults = hasApiKey
-                    ? syncService.syncTestIds(apiKey, serverUrl)
-                    : Map.of();
-
-            Set<String> validIds = new HashSet<>(syncResults.values());
-
-            List<TestCase> filteredTestCases = processingResult.allTestCases().stream()
-                    .filter(tc -> syncResults.isEmpty() || validIds.contains(tc.getId()))
-                    .toList();
-
-            ProcessingResult filteredResult =
-                    new ProcessingResult(filteredTestCases, processingResult.primaryFramework());
-
             int totalExported = exportService.handleProcessingResult(
-                    filteredResult.allTestCases(), filteredResult.primaryFramework(),
+                    processingResult.allTestCases(), processingResult.primaryFramework(),
                         apiKey, serverUrl, dryRun, structure);
 
             printCompletionMessage(totalExported);

@@ -166,6 +166,45 @@ class CliClientTest {
         assertTrue(exception.getMessage().contains("server URL"));
     }
 
+    @Test
+    void shouldRetryOnImportLocked422() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger requests =
+            new java.util.concurrent.atomic.AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/", exchange -> {
+            int number = requests.incrementAndGet();
+            boolean locked = number <= 2;
+            String body = locked
+                    ? "[Import Locked] Please wait for the previous import to finish."
+                    : "{\"ok\": true}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(locked ? 422 : 200, bytes.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+            exchange.close();
+        });
+        server.start();
+
+        CliClient client = new CliClient();
+
+        assertDoesNotThrow(() ->
+            client.sendPostRequest(baseUrl() + "/api/load?api_key=" + KEY, "{}"));
+
+        assertEquals(3, requests.get());
+    }
+
+    @Test
+    void shouldThrowImmediatelyOnOther422() throws Exception {
+        startServer(422, "{\"error\":\"invalid data\"}");
+        CliClient client = new CliClient();
+
+        CliException exception = assertThrows(CliException.class,
+            () -> client.sendPostRequest(baseUrl() + "/api/load?api_key=" + KEY, "{}"));
+
+        assertTrue(exception.getMessage().contains("422"));
+    }
+
     private String baseUrl() {
         return "http://localhost:" + server.getAddress().getPort();
     }

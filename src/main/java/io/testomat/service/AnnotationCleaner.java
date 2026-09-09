@@ -25,7 +25,8 @@ public class AnnotationCleaner {
         if (!dryRun) {
             String newText = applyDirectModifications(ktFile, annotations, imports);
             try {
-                Files.writeString(parsedKtFile.getPath(), newText);
+                String output = newText.replace("\n", parsedKtFile.getLineEnding());
+                Files.writeString(parsedKtFile.getPath(), output);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }

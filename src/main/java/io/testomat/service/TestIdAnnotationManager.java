@@ -1,12 +1,13 @@
 package io.testomat.service;
 
-import io.testomat.model.AnnotationBlock;
 import io.testomat.model.ParsedKtFile;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
 import org.jetbrains.kotlin.name.FqName;
@@ -23,6 +24,8 @@ public class TestIdAnnotationManager {
 
     private static final String TEST_ID_IMPORT = TestIdUtils.TEST_ID_FQN;
     private static final String TEST_ID_PREFIX = "@T";
+    private static final Pattern TITLE_PATTERN =
+            Pattern.compile("@Title\\s*\\(\\s*\"([^\"]+)\"");
 
     public Optional<KtNamedFunction> findMethodInParsedKtFiles(
             List<ParsedKtFile> parsedKtFiles, TestMethodInfo methodInfo, boolean verbose) {
@@ -160,20 +163,11 @@ public class TestIdAnnotationManager {
             boolean verbose
     ) {
 
-        String[] lines = ktFile.getText().split("\n");
-
-        List<AnnotationBlock> blocks = AnnotationUtils.collectAnnotationBlocks(lines);
-
         Collection<KtNamedFunction> allMethods =
                 PsiTreeUtil.findChildrenOfType(ktFile, KtNamedFunction.class);
 
         List<KtNamedFunction> matchingMethods = allMethods.stream()
-                .filter(m -> matchesByNameOrTitle(
-                m,
-                methodInfo.getMethodName(),
-                blocks,
-                lines
-            ))
+                .filter(m -> matchesByNameOrTitle(m, methodInfo.getMethodName()))
                 .filter(m -> isMethodInCorrectClass(
                 m,
                 methodInfo.getClassName(),
@@ -189,26 +183,31 @@ public class TestIdAnnotationManager {
         return matchingMethods;
     }
 
-    private boolean matchesByNameOrTitle(
-            KtNamedFunction method,
-            String expectedName,
-            List<AnnotationBlock> blocks,
-            String[] lines
-    ) {
-
+    private boolean matchesByNameOrTitle(KtNamedFunction method, String expectedName) {
         if (expectedName.equals(method.getName())) {
             return true;
         }
 
-        String block = AnnotationUtils.findHeaderForMethod(method, blocks, lines);
-
-        if (block == null) {
-            return false;
-        }
-
-        String title = AnnotationUtils.extractTitle(block);
+        String title = extractTitle(method);
 
         return title != null && expectedName.equals(title);
+    }
+
+    private String extractTitle(KtNamedFunction method) {
+        for (KtAnnotationEntry entry : method.getAnnotationEntries()) {
+            if (entry.getShortName() == null
+                    || !"Title".equals(entry.getShortName().getIdentifier())) {
+                continue;
+            }
+
+            Matcher matcher = TITLE_PATTERN.matcher(entry.getText());
+
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
+        }
+
+        return null;
     }
 
     private boolean isMethodInCorrectClass(KtNamedFunction method, String expectedClassName,

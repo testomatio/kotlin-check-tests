@@ -422,6 +422,32 @@ class TestMethodExtractorTest {
         assertTrue(code.contains("fun csvTextBlockTest"));
     }
 
+    @Test
+    void shouldKeepRelativeIndentationOfClassMethod() throws Exception {
+        ParsedKtFile parsedKtFile = createFile("""
+        class Conditional {
+            @Test
+            @EnabledOnJre(JRE.JAVA_17)
+            fun conditionalTest() {
+                assertTrue(true)
+            }
+        }
+    """);
+
+        List<TestCase> result = extractor.extractTestCases(
+            parsedKtFile.getKtFile(),
+            "test.kt",
+            "junit"
+        );
+
+        String code = result.get(0).getCode();
+
+        assertTrue(code.contains("@EnabledOnJre(JRE.JAVA_17)"));
+        assertTrue(code.contains("fun conditionalTest() {\n    assertTrue(true)\n}"));
+        assertFalse(code.contains("\n        assertTrue"));
+        assertFalse(code.contains("\n    }\n"));
+    }
+
     private int countOccurrences(String text, String token) {
         int count = 0;
         int index = 0;

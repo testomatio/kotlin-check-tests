@@ -156,8 +156,10 @@ public class TestIdSyncService {
                                 .filter(file ->
                                 file.getKtFile().equals(ktFile))
                                 .findFirst()
-                                .ifPresent(parsedKtFile ->
-                                modification.setFilePath(parsedKtFile.getPath()));
+                                .ifPresent(parsedKtFile -> {
+                                    modification.setFilePath(parsedKtFile.getPath());
+                                    modification.setLineEnding(parsedKtFile.getLineEnding());
+                                });
 
                         boolean hasImport = ktFile.getImportDirectives().stream()
                                 .anyMatch(imp ->
