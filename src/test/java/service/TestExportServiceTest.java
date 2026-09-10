@@ -2,6 +2,7 @@ package service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -234,6 +235,34 @@ class TestExportServiceTest {
     }
 
     @Test
+    @DisplayName("Should preserve CliException message from http client")
+    void shouldPreserveCliExceptionMessage() {
+        List<TestCase> testCases =
+            List.of(createTestCase("test1"));
+        when(jsonBuilder.buildRequestBody(
+            any(),
+            eq("junit5"),
+            eq(false)
+        )).thenReturn("{json}");
+        org.mockito.Mockito.doThrow(
+                new CliException("401 Unauthorized: invalid API key")
+            ).when(httpClient)
+            .sendPostRequest(any(), any());
+        CliException exception = assertThrows(
+            CliException.class,
+            () -> service.handleProcessingResult(
+                testCases,
+                "junit5",
+                "key",
+                "http://localhost",
+                false,
+                false
+            )
+        );
+        assertTrue(exception.getMessage().contains("401"));
+    }
+
+    @Test
     @DisplayName("Should process files and update progress")
     void shouldProcessFilesAndUpdateProgress() {
         File file = new File("test.kt");
@@ -301,6 +330,38 @@ class TestExportServiceTest {
                     null
                 );
             assertEquals(0, result.allTestCases().size());
+        }
+    }
+
+    @Test
+    @DisplayName("Should exclude skipped tests from processing result")
+    void shouldExcludeSkippedFromProcessingResult() {
+        File file = new File("test.kt");
+        try (MockedStatic<KotlinFileParser> mockedParser =
+            org.mockito.Mockito.mockStatic(KotlinFileParser.class)) {
+            mockedParser.when(() ->
+                    KotlinFileParser.parseFile(any(Path.class)))
+                .thenReturn(parsedKtFile);
+            when(parsedKtFile.getKtFile())
+                .thenReturn(ktFile);
+            when(detector.detectFramework(ktFile))
+                .thenReturn("junit5");
+            TestCase skipped = createTestCase("skipped");
+            skipped.setSkipped(true);
+            TestCase active = createTestCase("active");
+            when(extractor.extractTestCases(
+                any(),
+                any(),
+                any()
+            )).thenReturn(List.of(skipped, active));
+            ProcessingResult result =
+                service.processAllFiles(
+                    List.of(file),
+                    false,
+                    null
+                );
+            assertEquals(1, result.allTestCases().size());
+            assertEquals("active", result.allTestCases().get(0).getName());
         }
     }
 

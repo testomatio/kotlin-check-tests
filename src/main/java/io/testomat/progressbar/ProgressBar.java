@@ -34,6 +34,12 @@ public class ProgressBar {
     }
 
     private void printProgress() {
+        if (total <= 0) {
+            System.out.print("\r" + taskName + " [" + current + " items]");
+            System.out.flush();
+            return;
+        }
+
         double percentage = (double) current / total;
         int progress = (int) (percentage * barLength);
 

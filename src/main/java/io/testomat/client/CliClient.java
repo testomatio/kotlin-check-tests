@@ -24,6 +24,9 @@ public class CliClient implements TestomatHttpClient {
 
     private static final int MAX_RETRIES = 3;
     private static final int RETRY_DELAY_MS = 1000;
+    private static final int IMPORT_LOCK_RETRY_DELAY_MS = 2000;
+    private static final String IMPORT_LOCKED_MESSAGE = "Import Locked: another import is running "
+            + "on the server. Wait until it finishes and retry.";
     private static final int SUCCESS_STATUS_MIN = 200;
     private static final int SUCCESS_STATUS_MAX = 299;
     private static final int CLIENT_ERROR_MIN = 400;
@@ -37,35 +40,60 @@ public class CliClient implements TestomatHttpClient {
     @Override
     public String sendGetRequest(String apiKey, String serverUrl) {
         validateApiKey(apiKey);
+        validateServerUrl(serverUrl);
 
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(serverUrl + TEST_DATA_URL + apiKey))
-                    .timeout(GET_REQUEST_TIMEOUT)
-                    .header("Accept", ACCEPT_JSON)
-                    .GET()
-                    .build();
+        int attempt = 1;
+        Exception lastException = null;
 
-            HttpResponse<String> response = HTTP_CLIENT.send(request,
-                    HttpResponse.BodyHandlers.ofString());
+        while (attempt <= MAX_RETRIES) {
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(serverUrl + TEST_DATA_URL + apiKey))
+                        .timeout(GET_REQUEST_TIMEOUT)
+                        .header("Accept", ACCEPT_JSON)
+                        .header("User-Agent", USER_AGENT)
+                        .GET()
+                        .build();
 
-            validateGetResponse(response);
-            return response.body();
+                HttpResponse<String> response = HTTP_CLIENT.send(request,
+                        HttpResponse.BodyHandlers.ofString());
 
-        } catch (HttpTimeoutException e) {
-            throw new CliException("Request timeout after "
-                    + GET_REQUEST_TIMEOUT.getSeconds()
-                    + " seconds: "
-                    + e.getMessage(), e);
-        } catch (IOException e) {
-            throw new CliException("Network error occurred while sending request: "
-                    + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CliException("Request was interrupted: " + e.getMessage(), e);
-        } catch (Exception e) {
-            throw new CliException("Unexpected error occurred: " + e.getMessage(), e);
+                validateGetResponse(response);
+                return response.body();
+
+            } catch (HttpTimeoutException e) {
+                lastException = new CliException("Request timeout after "
+                        + GET_REQUEST_TIMEOUT.getSeconds()
+                        + " seconds: "
+                        + e.getMessage(), e);
+            } catch (ConnectException e) {
+                lastException = new CliException("Cannot connect to " + hostOf(serverUrl)
+                        + ". Check the server URL (--url / TESTOMATIO_URL) "
+                        + "and your internet connection.", e);
+            } catch (SocketTimeoutException e) {
+                lastException = new CliException("Request timed out. The server might be busy.", e);
+            } catch (IOException e) {
+                lastException = new CliException("Network error occurred while sending request: "
+                        + e.getMessage(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new CliException("Request was interrupted: " + e.getMessage(), e);
+            }
+
+            if (attempt < MAX_RETRIES) {
+                try {
+                    Thread.sleep((long) RETRY_DELAY_MS * attempt);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new CliException("Request was interrupted", ie);
+                }
+            }
+
+            attempt++;
         }
+
+        throw new CliException("Failed to fetch data after " + MAX_RETRIES + " attempts",
+                lastException);
     }
 
     @Override
@@ -74,6 +102,8 @@ public class CliClient implements TestomatHttpClient {
         Exception lastException = null;
 
         while (attempt <= MAX_RETRIES) {
+            boolean importLocked = false;
+
             try {
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(url))
@@ -91,16 +121,20 @@ public class CliClient implements TestomatHttpClient {
                 }
 
                 String errorMessage = formatPostHttpError(response);
+                importLocked = isImportLocked(response);
 
-                if (isClientError(response)) {
+                if (isClientError(response) && !importLocked) {
                     throw new CliException(errorMessage);
                 }
 
-                lastException = new CliException(errorMessage);
+                lastException = importLocked
+                        ? new CliException(IMPORT_LOCKED_MESSAGE)
+                        : new CliException(errorMessage);
 
             } catch (ConnectException e) {
-                lastException = new CliException("Cannot connect to testomat.io server. "
-                        + "Please check your internet connection.", e);
+                lastException = new CliException("Cannot connect to " + hostOf(url)
+                        + ". Check the server URL (--url / TESTOMATIO_URL) "
+                        + "and your internet connection.", e);
             } catch (SocketTimeoutException e) {
                 lastException = new CliException("Request timed out. The server might be busy.", e);
             } catch (IOException | InterruptedException e) {
@@ -108,10 +142,11 @@ public class CliClient implements TestomatHttpClient {
             }
 
             if (attempt < MAX_RETRIES) {
-                System.err.println("Attempt " + attempt + " failed, retrying in "
-                        + (RETRY_DELAY_MS * attempt) + "ms...");
+                long delay = importLocked
+                        ? (long) IMPORT_LOCK_RETRY_DELAY_MS * attempt
+                        : (long) RETRY_DELAY_MS * attempt;
                 try {
-                    Thread.sleep((long) RETRY_DELAY_MS * attempt);
+                    Thread.sleep(delay);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     throw new CliException("Export interrupted", ie);
@@ -123,6 +158,75 @@ public class CliClient implements TestomatHttpClient {
 
         throw new CliException("Failed to send data after " + MAX_RETRIES + " attempts",
                 lastException);
+    }
+
+    private boolean isImportLocked(HttpResponse<String> response) {
+        if (response.statusCode() != 422) {
+            return false;
+        }
+
+        String body = response.body();
+
+        return body != null && body.toLowerCase().contains("import locked");
+    }
+
+    public static void validateServerUrl(String serverUrl) {
+        if (serverUrl == null || serverUrl.trim().isEmpty()) {
+            throw new CliException("Server URL is required");
+        }
+
+        String url = serverUrl.trim();
+        URI uri;
+
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            throw new CliException("Invalid server URL: " + url
+                    + ". Check --url / TESTOMATIO_URL", e);
+        }
+
+        if (uri.getHost() == null) {
+            throw new CliException("Invalid server URL (missing host): " + url
+                    + ". Check --url / TESTOMATIO_URL");
+        }
+
+        if (url.startsWith("https://")) {
+            return;
+        }
+
+        if (url.startsWith("http://") && isLocalHost(url)) {
+            return;
+        }
+
+        throw new CliException("Server URL must use HTTPS (got: " + url + ")");
+    }
+
+    private static String hostOf(String url) {
+        try {
+            URI uri = URI.create(url);
+            return uri.getHost() != null ? uri.getHost() : url;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    private static boolean isLocalHost(String url) {
+        String host = url.substring("http://".length());
+
+        int slash = host.indexOf('/');
+        if (slash != -1) {
+            host = host.substring(0, slash);
+        }
+
+        int colon = host.indexOf(':');
+        if (colon != -1 && !host.startsWith("[")) {
+            host = host.substring(0, colon);
+        }
+
+        return host.equals("localhost")
+                || host.startsWith("127.0.0.1")
+                || host.equals("::1")
+                || host.startsWith("[::1]");
     }
 
     private void validateApiKey(String apiKey) {
@@ -146,19 +250,23 @@ public class CliClient implements TestomatHttpClient {
     private String buildGetErrorMessage(int statusCode) {
         switch (statusCode) {
             case 401:
-                return "Unauthorized - invalid API key";
+                return "401 Unauthorized: invalid API key. "
+                        + "Check that the API key (--apikey / TESTOMATIO) is correct";
             case 403:
-                return "Forbidden - access denied";
+                return "403 Forbidden: invalid API key. "
+                        + "Check the API key (--apikey / TESTOMATIO); if it is correct, "
+                        + "verify the project permissions on testomat.io";
             case 404:
-                return "Not found - check the endpoint URL";
+                return "404 Not Found: wrong server URL. "
+                        + "Check --url / TESTOMATIO_URL";
             case 429:
-                return "Too many requests - rate limit exceeded";
+                return "429 Too Many Requests: rate limit exceeded. Retry later";
             case 500:
-                return "Internal server error";
+                return "500 Internal Server Error: temporary server problem. Retry later";
             case 502:
             case 503:
             case 504:
-                return "Service temporarily unavailable";
+                return "503 Service Unavailable: temporary server problem. Retry later";
             default:
                 return "HTTP error " + statusCode;
         }
@@ -180,20 +288,26 @@ public class CliClient implements TestomatHttpClient {
 
         switch (statusCode) {
             case 401:
-                return "HTTP 401: Invalid API key. Please check your API key.";
+                return "401 Unauthorized: invalid API key. "
+                        + "Check that the API key (--apikey / TESTOMATIO) is correct";
             case 403:
-                return "HTTP 403: Access denied. Please check your API key permissions.";
+                return "403 Forbidden: invalid API key. "
+                        + "Check the API key (--apikey / TESTOMATIO); if it is correct, "
+                        + "verify the project upload permissions on testomat.io";
             case 404:
-                return "HTTP 404: API endpoint not found. Please check the server URL.";
+                return "404 Not Found: wrong server URL. "
+                        + "Check --url / TESTOMATIO_URL";
             case 422:
-                return "HTTP 422: Invalid data format. "
-                        + (body != null && !body.isEmpty() ? "Server response: " + body : "");
+                return "422 Invalid data: server rejected the payload."
+                        + (body != null && !body.isEmpty() ? " Response: " + body : "");
             case 429:
-                return "HTTP 429: Rate limit exceeded. Please try again later.";
+                return "429 Too Many Requests: rate limit exceeded. Retry later";
             case 500:
-                return "HTTP 500: Server error. Please try again later.";
+                return "500 Internal Server Error: temporary server problem. Retry later";
+            case 502:
             case 503:
-                return "HTTP 503: Service unavailable. Please try again later.";
+            case 504:
+                return "503 Service Unavailable: temporary server problem. Retry later";
             default:
                 return "HTTP " + statusCode + ": "
                         + (body != null && !body.isEmpty() ? body : "Unknown error");

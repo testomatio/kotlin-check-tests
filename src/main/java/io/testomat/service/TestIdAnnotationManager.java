@@ -1,24 +1,31 @@
 package io.testomat.service;
 
-import io.testomat.model.AnnotationBlock;
 import io.testomat.model.ParsedKtFile;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.jetbrains.kotlin.com.intellij.psi.util.PsiTreeUtil;
+import org.jetbrains.kotlin.name.FqName;
 import org.jetbrains.kotlin.psi.KtAnnotationEntry;
 import org.jetbrains.kotlin.psi.KtClass;
 import org.jetbrains.kotlin.psi.KtFile;
+import org.jetbrains.kotlin.psi.KtImportDirective;
+import org.jetbrains.kotlin.psi.KtImportList;
 import org.jetbrains.kotlin.psi.KtNamedFunction;
 import org.jetbrains.kotlin.psi.KtPsiFactory;
+import org.jetbrains.kotlin.resolve.ImportPath;
 
 public class TestIdAnnotationManager {
 
-    private static final String TEST_ID_IMPORT = "io.testomat.core.annotation.TestId";
-    private static final String TEST_ID_ANNOTATION = "TestId";
+    private static final String TEST_ID_IMPORT = TestIdUtils.TEST_ID_FQN;
     private static final String TEST_ID_PREFIX = "@T";
+    private static final Pattern TITLE_PATTERN =
+            Pattern.compile("@Title\\s*\\(\\s*\"([^\"]+)\"");
 
     public Optional<KtNamedFunction> findMethodInParsedKtFiles(
             List<ParsedKtFile> parsedKtFiles, TestMethodInfo methodInfo, boolean verbose) {
@@ -31,10 +38,12 @@ public class TestIdAnnotationManager {
 
         Optional<KtNamedFunction> result;
 
-        String expectedFileName = extractFileName(methodInfo.getFilePath());
+        String expectedFileName = methodInfo.getFilePath() != null
+                ? extractFileName(methodInfo.getFilePath()) : null;
 
         result = parsedKtFiles.stream()
-            .filter(ktFile -> isMatchingFile(ktFile.getKtFile(), expectedFileName, verbose))
+            .filter(file -> expectedFileName == null
+                    || isMatchingFile(file.getKtFile(), expectedFileName, verbose))
             .flatMap(ktFile ->
                 findMethodsInParsedKtFile(ktFile.getKtFile(), methodInfo, verbose).stream())
             .findFirst();
@@ -44,6 +53,13 @@ public class TestIdAnnotationManager {
                 System.out.println("  Found method using exact filename match");
             }
             return result;
+        }
+
+        if (methodInfo.getFilePath() == null) {
+            if (verbose) {
+                System.out.println("  Not found key without file path");
+            }
+            return Optional.empty();
         }
 
         result = parsedKtFiles.stream()
@@ -72,7 +88,7 @@ public class TestIdAnnotationManager {
 
         Optional<KtAnnotationEntry> existingAnnotation =
                 method.getAnnotationEntries().stream()
-                .filter(a -> TEST_ID_ANNOTATION.equals(getAnnotationName(a)))
+                .filter(a -> TestIdUtils.isTestIdAnnotation(a, method.getContainingKtFile()))
                 .findFirst();
 
         if (existingAnnotation.isPresent()) {
@@ -87,6 +103,20 @@ public class TestIdAnnotationManager {
                 .anyMatch(imp ->
                 imp.getImportedFqName() != null
                     && TEST_ID_IMPORT.equals(imp.getImportedFqName().asString()));
+
+        if (!hasImport) {
+            KtImportList importList = ktFile.getImportList();
+
+            if (importList == null) {
+                return;
+            }
+
+            KtPsiFactory factory = new KtPsiFactory(ktFile.getProject());
+            KtImportDirective importDirective =
+                    factory.createImportDirective(new ImportPath(
+                            new FqName(TEST_ID_IMPORT), false));
+            importList.add(importDirective);
+        }
     }
 
     private boolean isMatchingFile(KtFile ktFile, String expectedFileName,
@@ -133,20 +163,11 @@ public class TestIdAnnotationManager {
             boolean verbose
     ) {
 
-        String[] lines = ktFile.getText().split("\n");
-
-        List<AnnotationBlock> blocks = AnnotationUtils.collectAnnotationBlocks(lines);
-
         Collection<KtNamedFunction> allMethods =
                 PsiTreeUtil.findChildrenOfType(ktFile, KtNamedFunction.class);
 
         List<KtNamedFunction> matchingMethods = allMethods.stream()
-                .filter(m -> matchesByNameOrTitle(
-                m,
-                methodInfo.getMethodName(),
-                blocks,
-                lines
-            ))
+                .filter(m -> matchesByNameOrTitle(m, methodInfo.getMethodName()))
                 .filter(m -> isMethodInCorrectClass(
                 m,
                 methodInfo.getClassName(),
@@ -162,26 +183,31 @@ public class TestIdAnnotationManager {
         return matchingMethods;
     }
 
-    private boolean matchesByNameOrTitle(
-            KtNamedFunction method,
-            String expectedName,
-            List<AnnotationBlock> blocks,
-            String[] lines
-    ) {
-
+    private boolean matchesByNameOrTitle(KtNamedFunction method, String expectedName) {
         if (expectedName.equals(method.getName())) {
             return true;
         }
 
-        String block = AnnotationUtils.findHeaderForMethod(method, blocks, lines);
-
-        if (block == null) {
-            return false;
-        }
-
-        String title = AnnotationUtils.extractTitle(block);
+        String title = extractTitle(method);
 
         return title != null && expectedName.equals(title);
+    }
+
+    private String extractTitle(KtNamedFunction method) {
+        for (KtAnnotationEntry entry : method.getAnnotationEntries()) {
+            if (entry.getShortName() == null
+                    || !"Title".equals(entry.getShortName().getIdentifier())) {
+                continue;
+            }
+
+            Matcher matcher = TITLE_PATTERN.matcher(entry.getText());
+
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
+        }
+
+        return null;
     }
 
     private boolean isMethodInCorrectClass(KtNamedFunction method, String expectedClassName,
@@ -190,22 +216,76 @@ public class TestIdAnnotationManager {
         KtClass clazz = PsiTreeUtil.getParentOfType(method, KtClass.class);
 
         if (clazz != null) {
-            String actual = clazz.getName();
-            boolean matches = expectedClassName.equals(actual);
+            boolean matches = matchesClassChain(method, clazz, expectedClassName);
 
             if (verbose) {
-                System.out.println("      Class match: " + actual + " vs "
+                System.out.println("      Class match: " + clazz.getName() + " vs "
                         + expectedClassName + " -> " + matches);
             }
 
             return matches;
         }
 
+        boolean matches = isTopLevelClassMatch(method, expectedClassName);
+
         if (verbose) {
-            System.out.println("      Method has no containing class");
+            System.out.println("      Top-level method, expected class " + expectedClassName
+                    + " -> " + matches);
         }
 
-        return false;
+        return matches;
+    }
+
+    private boolean matchesClassChain(KtNamedFunction method, KtClass clazz,
+            String expectedClassName) {
+        if (expectedClassName == null || expectedClassName.isEmpty()
+                || "Unknown".equals(expectedClassName)) {
+            return true;
+        }
+
+        List<String> expectedChain = tokenizeClassName(expectedClassName);
+        List<String> actualChain = getClassChain(method);
+
+        return expectedChain.equals(actualChain);
+    }
+
+    private List<String> getClassChain(KtNamedFunction method) {
+        List<String> chain = new ArrayList<>();
+
+        KtClass currentClass = PsiTreeUtil.getParentOfType(method, KtClass.class);
+
+        while (currentClass != null) {
+            if (currentClass.getName() != null) {
+                chain.add(0, currentClass.getName());
+            }
+            currentClass = PsiTreeUtil.getParentOfType(currentClass, KtClass.class);
+        }
+
+        return chain;
+    }
+
+    private List<String> tokenizeClassName(String className) {
+        String normalized = className.replaceAll("[^\\p{L}\\p{N}]+", " ").trim();
+
+        if (normalized.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        return new ArrayList<>(List.of(normalized.split("\\s+")));
+    }
+
+    private boolean isTopLevelClassMatch(KtNamedFunction method, String expectedClassName) {
+        if (expectedClassName == null || expectedClassName.isEmpty()
+                || "Unknown".equals(expectedClassName)) {
+            return true;
+        }
+
+        String fileName = method.getContainingKtFile().getName();
+        String baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+
+        return expectedClassName.equals(baseName)
+                || expectedClassName.equals(baseName + "Kt")
+                || tokenizeClassName(expectedClassName).size() <= 3;
     }
 
     private String extractFileName(String filePath) {
@@ -230,12 +310,6 @@ public class TestIdAnnotationManager {
                 factory.createAnnotationEntry("@TestId(\"" + cleanTestId + "\")");
 
         method.addAnnotationEntry(annotation);
-    }
-
-    private String getAnnotationName(KtAnnotationEntry annotation) {
-        return annotation.getShortName() != null
-            ? annotation.getShortName().getIdentifier()
-            : "";
     }
 
     public static class TestMethodInfo {

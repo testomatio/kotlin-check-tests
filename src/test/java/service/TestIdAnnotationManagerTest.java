@@ -90,6 +90,104 @@ class TestIdAnnotationManagerTest {
     }
 
     @Test
+    void shouldFindTopLevelMethodWhenClassIsUnknown() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("Simple.kt", """
+            @Test
+            fun topLevelTest() {}
+        """);
+
+        TestMethodInfo info = new TestMethodInfo(
+            "Simple.kt",
+            "",
+            "topLevelTest"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), info, false);
+
+        assertTrue(result.isPresent());
+    }
+
+    @Test
+    void shouldMatchTopLevelMethodWithClassLabel() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("Simple.kt", """
+            @Test
+            fun topLevelTest() {}
+        """);
+
+        TestMethodInfo info = new TestMethodInfo(
+            "Simple.kt",
+            "SomeClass",
+            "topLevelTest"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), info, false);
+
+        assertTrue(result.isPresent());
+    }
+
+    @Test
+    void shouldMatchNestedClassChain() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("Nested.kt", """
+            class Outer {
+                class Inner {
+                    fun testMethod() {}
+                }
+            }
+        """);
+
+        TestMethodInfo info = new TestMethodInfo(
+            "Nested.kt",
+            "Outer › Inner",
+            "testMethod"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), info, false);
+
+        assertTrue(result.isPresent());
+    }
+
+    @Test
+    void shouldMatchTopLevelMethodByFileFacadeClass() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("Simple.kt", """
+            @Test
+            fun topLevelTest() {}
+        """);
+
+        TestMethodInfo facadeInfo = new TestMethodInfo(
+            "Simple.kt",
+            "SimpleKt",
+            "topLevelTest"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), facadeInfo, false);
+
+        assertTrue(result.isPresent());
+    }
+
+    @Test
+    void shouldMatchTopLevelMethodByFileNameAsClass() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("Simple.kt", """
+            @Test
+            fun topLevelTest() {}
+        """);
+
+        TestMethodInfo fileInfo = new TestMethodInfo(
+            "Simple.kt",
+            "Simple",
+            "topLevelTest"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), fileInfo, false);
+
+        assertTrue(result.isPresent());
+    }
+
+    @Test
     void shouldFindMethodAcrossMultipleFiles() throws IOException {
         ParsedKtFile file1 = createParsedFile("A.kt", """
             class A {
@@ -154,6 +252,46 @@ class TestIdAnnotationManagerTest {
             manager.findMethodInParsedKtFiles(List.of(parsedKtFile), info, false);
 
         assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void shouldFindMethodByClassAndNameWithoutPath() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("MyTest.kt", """
+            class MyTest {
+                fun testMethod() {}
+            }
+        """);
+
+        TestMethodInfo info = new TestMethodInfo(
+            null,
+            "MyTest",
+            "testMethod"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), info, false);
+
+        assertTrue(result.isPresent());
+    }
+
+    @Test
+    void shouldFindMethodByNameOnly() throws IOException {
+        ParsedKtFile parsedKtFile = createParsedFile("MyTest.kt", """
+            class MyTest {
+                fun testMethod() {}
+            }
+        """);
+
+        TestMethodInfo info = new TestMethodInfo(
+            null,
+            null,
+            "testMethod"
+        );
+
+        Optional<KtNamedFunction> result =
+            manager.findMethodInParsedKtFiles(List.of(parsedKtFile), info, false);
+
+        assertTrue(result.isPresent());
     }
 
 }

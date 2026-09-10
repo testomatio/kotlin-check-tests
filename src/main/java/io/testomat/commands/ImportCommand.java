@@ -1,5 +1,6 @@
 package io.testomat.commands;
 
+import io.testomat.exception.CliException;
 import io.testomat.progressbar.ProgressBar;
 import io.testomat.service.DirectoryValidator;
 import io.testomat.service.TestExportService;
@@ -118,7 +119,7 @@ public class ImportCommand implements Callable<Integer> {
             return SUCCESS_EXIT_CODE;
 
         } catch (Exception e) {
-            System.err.println("Export failed: " + e.getMessage());
+            System.err.println("Export failed: " + CliException.describe(e));
             if (verbose) {
                 e.printStackTrace();
             }

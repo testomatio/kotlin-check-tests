@@ -1,33 +1,25 @@
 package io.testomat.commands;
 
-import io.testomat.client.CliClient;
+import io.testomat.exception.CliException;
 import io.testomat.model.ProcessingResult;
-import io.testomat.model.TestCase;
 import io.testomat.progressbar.ProgressBar;
 import io.testomat.service.DirectoryValidator;
-import io.testomat.service.ResponseParser;
 import io.testomat.service.TestExportService;
 import io.testomat.service.TestFileScanner;
-import io.testomat.service.TestIdAnnotationManager;
-import io.testomat.service.TestIdSyncService;
 import io.testomat.service.VerboseLogger;
 import java.io.File;
-import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 
 @CommandLine.Command(
         name = "sync",
+        aliases = {"update-ids"},
         description = "Run export then importId",
         mixinStandardHelpOptions = true)
 public class SyncCommand implements Runnable {
-    private static final Logger log = LoggerFactory.getLogger(ImportCommand.class);
-    private static final String VERSION = "v.0.1.1";
+    private static final String VERSION = "v.0.2.0";
 
     private static final String CURRENT_DIRECTORY = ".";
     private static final String DEFAULT_URL = "https://app.testomat.io";
@@ -79,10 +71,10 @@ public class SyncCommand implements Runnable {
 
     public SyncCommand(DirectoryValidator validator,
             TestFileScanner scanner,
-            TestExportService exportService, TestExportService exportService1) {
+            TestExportService exportService) {
         this.validator = validator;
         this.scanner = scanner;
-        this.exportService = exportService1;
+        this.exportService = exportService;
     }
 
     @Override
@@ -99,6 +91,13 @@ public class SyncCommand implements Runnable {
                 }
             }
 
+            boolean hasApiKey = apiKey != null && !apiKey.trim().isEmpty();
+
+            if (!hasApiKey && !dryRun) {
+                System.out.println("TESTOMATIO API key not provided, running in dry-run mode");
+                dryRun = true;
+            }
+
             VerboseLogger logger = new VerboseLogger(verbose);
 
             logger.log("Starting test export from directory: " + directory.getAbsolutePath());
@@ -110,40 +109,29 @@ public class SyncCommand implements Runnable {
 
             if (testFiles.isEmpty()) {
                 System.out.println("No test files found!");
+                return;
             }
-
-            TestIdSyncService syncService = new TestIdSyncService(
-                    new CliClient(),
-                    new ResponseParser(),
-                    new TestIdAnnotationManager()
-            );
 
             ProgressBar progressBar = new ProgressBar(testFiles.size(),
                     "Parsing " + testFiles.size() + " files");
 
             ProcessingResult processingResult =
                     exportService.processAllFiles(testFiles, verbose, progressBar);
-            Map<String, String> syncResults = syncService.syncTestIds(apiKey, serverUrl);
-
-            Set<String> validIds = new HashSet<>(syncResults.values());
-
-            List<TestCase> filteredTestCases = processingResult.allTestCases().stream()
-                    .filter(tc -> validIds.contains(tc.getId()))
-                    .toList();
-
-            ProcessingResult filteredResult =
-                    new ProcessingResult(filteredTestCases, processingResult.primaryFramework());
 
             int totalExported = exportService.handleProcessingResult(
-                    filteredResult.allTestCases(), filteredResult.primaryFramework(),
+                    processingResult.allTestCases(), processingResult.primaryFramework(),
                         apiKey, serverUrl, dryRun, structure);
 
             printCompletionMessage(totalExported);
 
-            CommandLine parent = spec.parent().commandLine();
-            handeCommandExecution(parent, getImportArgsForCommand("pull-ids"));
+            if (hasApiKey) {
+                CommandLine parent = spec.parent().commandLine();
+                handeCommandExecution(parent, getImportArgsForCommand("pull-ids"));
+            } else {
+                System.out.println("Skipping pull-ids: API key not provided");
+            }
         } catch (Exception e) {
-            System.err.println("Export failed: " + e.getMessage());
+            System.err.println("Export failed: " + CliException.describe(e));
             if (verbose) {
                 e.printStackTrace();
             }
@@ -163,26 +151,25 @@ public class SyncCommand implements Runnable {
     }
 
     private String[] getImportArgsForCommand(String command) {
-        return verbose
-                ? new String[]{command,
-                    "--apikey=" + apiKey,
-                    "--url=" + serverUrl,
-                    "--directory=" + directory,
-                    "--keep-structure=" + structure,
-                    "-v"}
-            : new String[]{command,
-                "--apikey=" + apiKey,
-                "--url=" + serverUrl,
-                "--directory=" + directory,
-                "--keep-structure=" + structure};
+        List<String> args = new ArrayList<>();
+        args.add(command);
+        args.add("--apikey=" + apiKey);
+        args.add("--url=" + serverUrl);
+        args.add("--directory=" + directory);
+        args.add("--keep-structure=" + structure);
+
+        if (verbose) {
+            args.add("-v");
+        }
+
+        return args.toArray(new String[0]);
     }
 
     private void handeCommandExecution(CommandLine parent, String[] args) {
         System.out.println("Running " + args[0] + " command...");
         int code1 = parent.execute(args);
         if (code1 != 0) {
-            spec.commandLine().getErr().println("import failed with code " + code1);
-            System.exit(code1);
+            throw new CliException("pull-ids failed with code " + code1);
         }
     }
 }

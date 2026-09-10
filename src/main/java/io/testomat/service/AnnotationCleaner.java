@@ -15,8 +15,7 @@ import org.jetbrains.kotlin.psi.KtImportDirective;
 
 public class AnnotationCleaner {
 
-    private static final String TEST_ID_IMPORT = "io.testomat.core.annotation.TestId";
-    private static final String TEST_ID_ANNOTATION = "TestId";
+    private static final String TEST_ID_IMPORT = TestIdUtils.TEST_ID_FQN;
 
     public CleanupResult cleanTestIdAnnotations(ParsedKtFile parsedKtFile, boolean dryRun) {
         KtFile ktFile = parsedKtFile.getKtFile();
@@ -26,7 +25,8 @@ public class AnnotationCleaner {
         if (!dryRun) {
             String newText = applyDirectModifications(ktFile, annotations, imports);
             try {
-                Files.writeString(parsedKtFile.getPath(), newText);
+                String output = newText.replace("\n", parsedKtFile.getLineEnding());
+                Files.writeString(parsedKtFile.getPath(), output);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -63,8 +63,7 @@ public class AnnotationCleaner {
                 PsiTreeUtil.findChildrenOfType(ktFile, KtAnnotationEntry.class);
 
         return annotations.stream()
-            .filter(a -> a.getShortName() != null
-                && TEST_ID_ANNOTATION.equals(a.getShortName().getIdentifier()))
+            .filter(a -> TestIdUtils.isTestIdAnnotation(a, ktFile))
             .toList();
     }
 
